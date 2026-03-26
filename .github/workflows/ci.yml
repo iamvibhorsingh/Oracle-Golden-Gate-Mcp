@@ -9,9 +9,6 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: mcp1
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
