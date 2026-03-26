@@ -57,10 +57,10 @@ goldengate-mcp-server = "goldengate_mcp_server.server:main"
 goldengate-rest-server = "goldengate_mcp_server.rest_api:main"
 
 [project.urls]
-Homepage = ""
-Documentation = ""
-Repository = ""
-Issues = ""
+Homepage = "https://github.com/iamvibhorsingh/Oracle-Golden-Gate-Mcp"
+Documentation = "https://github.com/iamvibhorsingh/Oracle-Golden-Gate-Mcp#readme"
+Repository = "https://github.com/iamvibhorsingh/Oracle-Golden-Gate-Mcp.git"
+Issues = "https://github.com/iamvibhorsingh/Oracle-Golden-Gate-Mcp/issues"
 
 [tool.setuptools.packages.find]
 where = ["src"]
