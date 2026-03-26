@@ -1,0 +1,77 @@
+# GoldenGate MCP Server - Local Test Environment
+# Spins up Oracle GoldenGate for Oracle Free + Oracle Database Free for end-to-end testing
+#
+# Prerequisites:
+#   - Docker Desktop running (both images are PUBLIC, no login required)
+#
+# Usage:
+#   docker compose --env-file .env.local up -d
+#   docker compose --env-file .env.local down
+
+services:
+
+  # ─────────────────────────────────────────
+  # Oracle Database Free (source/target DB)
+  # ─────────────────────────────────────────
+  oracle-db:
+    image: container-registry.oracle.com/database/free:latest
+    container_name: ggmcp-oracle-db
+    hostname: oracle-db
+    ports:
+      - "1521:1521"
+      - "5500:5500"   # Enterprise Manager Express (optional)
+    environment:
+      ORACLE_PWD: ${ORACLE_PWD:-GGMCP_Admin123}   # override via .env.local if desired
+      ORACLE_CHARACTERSET: AL32UTF8
+      ENABLE_ARCHIVELOG: "true"
+    volumes:
+      - oracle-data:/opt/oracle/oradata
+      - ./docker/oracle-init:/opt/oracle/scripts/startup   # optional init SQL
+    healthcheck:
+      test: ["CMD", "/opt/oracle/checkDBStatus.sh"]
+      interval: 30s
+      timeout: 10s
+      retries: 20
+      start_period: 3m
+    networks:
+      - ggmcp-net
+
+  # ─────────────────────────────────────────
+  # Oracle GoldenGate for Oracle Free
+  # (Full Microservices Architecture with REST API)
+  # ─────────────────────────────────────────
+  goldengate:
+    image: container-registry.oracle.com/goldengate/goldengate-oracle-free:latest
+    container_name: ggmcp-goldengate
+    hostname: goldengate
+    ports:
+      - "9100:8443"   # GG Microservices REST API (https://localhost:9100/services/v2)
+    environment:
+      OGG_ADMIN: ${OGG_ADMIN:-oggadmin}
+      OGG_ADMIN_PWD: ${OGG_ADMIN_PWD:-GGMCP_Admin123}   # override via .env.local if desired
+      OGG_DEPLOYMENT: ${OGG_DEPLOYMENT:-LocalTest}
+    volumes:
+      - gg-data:/u02
+      - gg-trails:/u03
+    depends_on:
+      oracle-db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-sk", "-u",
+             "${OGG_ADMIN:-oggadmin}:${OGG_ADMIN_PWD:-GGMCP_Admin123}",
+             "https://localhost:8443/services/v2/deployments"]
+      interval: 30s
+      timeout: 10s
+      retries: 15
+      start_period: 3m
+    networks:
+      - ggmcp-net
+
+volumes:
+  oracle-data:
+  gg-data:
+  gg-trails:
+
+networks:
+  ggmcp-net:
+    driver: bridge
