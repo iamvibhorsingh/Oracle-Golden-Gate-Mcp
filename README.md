@@ -37,7 +37,7 @@ Full rules are implemented in `goldengate_mcp_server.models.classify_severity`. 
 | **GG 21.x Support** | ✅ Works with 21.x ([19c partial, 12.3+ with changes](docs/VERSION_COMPATIBILITY.md)) | ❌ Requires 23.x |
 | **Batch Operations** | ✅ Start/stop multiple processes | ❌ One at a time |
 | **Database Correlation** | ✅ Links DB performance to lag | ❌ GG metrics only |
-| **AI-Layer Audit Trail** | ✅ Every tool call logged with args & results. Documents what the AI touched. | ❌ Predates AI tooling |
+| **AI-Layer Audit Trail** | ✅ Every tool call logged with args & results. Documents what the AI touches. | ❌ Predates AI tooling |
 
 ## Key Features
 
@@ -257,36 +257,36 @@ GRANT CONNECT TO gg_monitor;
 ## Architecture
 
 ```
-┌─────────────────┐
-│   AI Assistant  │
-│   (Claude, etc) │
-└────────┬────────┘
-         │ MCP Protocol
-         │
-┌────────▼────────────────────────┐
-│   GoldenGate MCP Server         │
-│                                 │
-│  ┌──────────────────────────┐  │
-│  │  Security Layer          │  │
-│  │  - Read-only mode        │  │
-│  │  - Input validation      │  │
-│  │  - Audit logging         │  │
-│  └──────────────────────────┘  │
-│                                 │
-│  ┌──────────────────────────┐  │
-│  │  GoldenGate API Client   │  │
-│  │  - REST API calls        │  │
-│  │  - Error handling        │  │
-│  │  - Retry logic           │  │
-│  └──────────────────────────┘  │
-└─────────────┬───────────────────┘
-              │ HTTPS/REST
-              │
-     ┌────────▼────────┐
-     │   GoldenGate    │
-     │   Deployment    │
-     │   (21.x/23.x)   │
-     └─────────────────┘
+           ┌─────────────────┐
+           │   AI Assistant  │
+           │                 │
+           └────────┬────────┘
+                    │ MCP Protocol
+                    │
+    ┌───────────────▼─────────────────┐
+    │   GoldenGate MCP Server         │
+    │                                 │
+    │  ┌──────────────────────────┐   │
+    │  │  Security Layer          │   │
+    │  │  - Read-only mode        │   │
+    │  │  - Input validation      │   │
+    │  │  - Audit logging         │   │
+    │  └──────────────────────────┘   │
+    │                                 │
+    │  ┌──────────────────────────┐   │
+    │  │  GoldenGate API Client   │   │
+    │  │  - REST API calls        │   │
+    │  │  - Error handling        │   │
+    │  │  - Retry logic           │   │
+    │  └──────────────────────────┘   │
+    └────────────────┬────────────────┘
+                     │   HTTPS/REST
+                     │
+            ┌────────▼────────┐
+            │   GoldenGate    │
+            │   Deployment    │
+            │   (21.x/23.x)   │
+            └─────────────────┘
 ```
 
 ## Example Usage with AI Assistants
