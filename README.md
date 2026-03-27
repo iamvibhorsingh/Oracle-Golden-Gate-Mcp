@@ -13,14 +13,14 @@
 
 Classification uses the current lag, optional 7‑day baseline from the local metrics store, and process status (`running` / otherwise). Summary:
 
-| Severity | When (simplified) |
+| Severity | When |
 |----------|-------------------|
 | **critical** | Process not running (`stopped` / `abended` / unknown non‑running), or lag **> 5σ** above baseline mean |
 | **high** | **> 3σ**, or lag **> 2×** baseline mean, or (no σ) **> 3×** mean |
 | **elevated** | **> 1.5σ**, or above **p95**, or **> 1.5×** mean |
 | **normal** | Below the above gates or insufficient baseline (no mean → no alarm on lag alone) |
 
-Full rules are implemented in `goldengate_mcp_server.models.classify_severity`.
+Full rules are implemented in `goldengate_mcp_server.models.classify_severity`. Feel free to tailor them according to your needs.
 
 ### Platform note
 
@@ -34,9 +34,10 @@ Full rules are implemented in `goldengate_mcp_server.models.classify_severity`.
 | **Root Cause Analysis** | ✅ AI diagnoses issues | ❌ Shows symptoms only |
 | **Historical Analysis** | ✅ 30-day baselines & trends | ❌ Real-time only |
 | **Multi-Deployment** | ✅ On-prem + cloud unified | ❌ Per-deployment only |
-| **GG 21.x Support** | ✅ Works with 21.x | ❌ Requires 23.x |
+| **GG 21.x Support** | ✅ Works with 21.x ([19c partial, 12.3+ with changes](docs/VERSION_COMPATIBILITY.md)) | ❌ Requires 23.x |
 | **Batch Operations** | ✅ Start/stop multiple processes | ❌ One at a time |
 | **Database Correlation** | ✅ Links DB performance to lag | ❌ GG metrics only |
+| **AI-Layer Audit Trail** | ✅ Every tool call logged with args & results. Documents what the AI touched. | ❌ Predates AI tooling |
 
 ## Key Features
 
