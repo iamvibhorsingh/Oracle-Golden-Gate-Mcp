@@ -111,6 +111,9 @@ class Config(BaseModel):
         request_timeout = int(os.getenv("GG_REQUEST_TIMEOUT", "30"))
         audit_log_path = os.getenv("GG_AUDIT_LOG_PATH", "./logs/audit.log")
         metrics_db_path = os.getenv("GG_METRICS_DB_PATH", "./data/metrics.db")
+        cache_ttl_seconds = int(os.getenv("GG_CACHE_TTL_SECONDS", "30"))
+        max_concurrent_requests = int(os.getenv("GG_MAX_CONCURRENT_REQUESTS", "10"))
+        requests_per_second = int(os.getenv("GG_REQUESTS_PER_SECOND", "20"))
 
         # Load deployments
         deployments = []
@@ -162,6 +165,9 @@ class Config(BaseModel):
             request_timeout=request_timeout,
             audit_log_path=audit_log_path,
             metrics_db_path=metrics_db_path,
+            cache_ttl_seconds=cache_ttl_seconds,
+            max_concurrent_requests=max_concurrent_requests,
+            requests_per_second=requests_per_second,
             deployments=deployments
         )
 

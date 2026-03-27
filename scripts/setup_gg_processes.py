@@ -118,7 +118,7 @@ def write_extract_params(container: str):
             f"EXTRACT {name}\n"
             f"USERIDALIAS ggadmin_src DOMAIN OracleGoldenGate\n"
             f"EXTTRAIL {trail}\n"
-            f"TABLE FREEPDB1.GG_SRC.{tbl.upper()};\n"
+            f"TABLE GG_SRC.{tbl.upper()};\n"
         )
         # Write param file into container
         result = subprocess.run(
@@ -143,7 +143,7 @@ def setup_replicats(container: str, deployment: str, user: str,
         "",
         "DBLOGIN USERIDALIAS ggadmin_tgt DOMAIN OracleGoldenGate",
         "",
-        "ADD CHECKPOINTTABLE ggadmin_tgt.chkptab",
+        "ADD CHECKPOINTTABLE ggadmin.chkptab",
         "",
     ]
 
@@ -153,7 +153,7 @@ def setup_replicats(container: str, deployment: str, user: str,
 
         commands.extend([
             f"ADD REPLICAT {name}, EXTTRAIL {trail}, "
-            f"CHECKPOINTTABLE ggadmin_tgt.chkptab",
+            f"CHECKPOINTTABLE ggadmin.chkptab",
             "",
         ])
 
@@ -171,8 +171,7 @@ def write_replicat_params(container: str):
         params = (
             f"REPLICAT {name}\n"
             f"USERIDALIAS ggadmin_tgt DOMAIN OracleGoldenGate\n"
-            f"MAP FREEPDB1.GG_SRC.{tbl.upper()}, "
-            f"TARGET FREEPDB1.GG_TGT.{tbl.upper()};\n"
+            f"MAP GG_SRC.{tbl.upper()}, TARGET GG_TGT.{tbl.upper()};\n"
         )
         result = subprocess.run(
             ["docker", "exec", "-i", container, "bash", "-c",
@@ -199,7 +198,8 @@ def start_processes(container: str, deployment: str, user: str,
     for i in range(1, 11):
         commands.append(f"START EXTRACT EXT{i:02d}")
 
-    # Small delay between starting extracts and replicats
+    commands.append("SHELL sleep 5")
+
     for i in range(1, 11):
         commands.append(f"START REPLICAT REP{i:02d}")
 
