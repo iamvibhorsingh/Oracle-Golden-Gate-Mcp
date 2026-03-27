@@ -1,9 +1,4 @@
-"""
-Example test script for GoldenGate MCP Server
-
-This script demonstrates how to test the GoldenGate client directly
-without the full MCP server infrastructure.
-"""
+"""Manual GoldenGate client connectivity check (run against a real deployment)."""
 
 import asyncio
 import os

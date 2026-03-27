@@ -388,6 +388,7 @@ mypy src/
 - **Trail endpoints**: `list_trails` and `get_trail_info` may not be available on GG Free edition (Enterprise only)
 - **Database correlation**: `check_database_correlation` requires optional oracledb monitoring config (`GG_ORACLEDB_*` env vars)
 - **Write operations**: `start_*`, `stop_*`, `batch_*` require `GG_READ_ONLY=false` and should be tested thoroughly before production use
+- **Background metrics collection cap**: The collection loop runs sequentially — approximately **~40 deployments** is the practical ceiling before rounds take longer than the 5-minute interval. This only affects historical metrics (`get_lag_trend`, `get_performance_baseline`); all live tools (`get_replicat_lag`, `diagnose_lag_issue`, etc.) target a single deployment on-demand and are unaffected by deployment count. This MCP is designed as a **per-user or per-team** tool — each instance should cover the deployments that user or team is responsible for, not a centralised monitor for an entire estate.
 
 ## Database Correlation (Optional)
 

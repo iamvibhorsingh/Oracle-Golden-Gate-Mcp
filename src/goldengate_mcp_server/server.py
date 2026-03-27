@@ -61,8 +61,6 @@ class GoldenGateMCPServer(
     OperationalMixin,
     ConfigToolsMixin,
 ):
-    """MCP Server for Oracle GoldenGate operations."""
-
     def __init__(self, config: Config):
         self.config = config
         self.server = Server("goldengate-mcp-server")
@@ -206,7 +204,7 @@ class GoldenGateMCPServer(
 
 
 async def main() -> None:
-    load_dotenv()  # Load .env file if present
+    load_dotenv()
     config = Config.from_env()
     server = GoldenGateMCPServer(config)
     await server.run()

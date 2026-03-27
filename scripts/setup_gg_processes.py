@@ -1,15 +1,5 @@
 #!/usr/bin/env python3
-"""
-setup_gg_processes.py — Configure 10 Extracts + 10 Replicats on GoldenGate Free
-using AdminClient via docker exec (REST API is read-only for process management).
-
-Usage:
-    python scripts/setup_gg_processes.py [--password GGMCP_Admin123]
-                                         [--container ggmcp-goldengate]
-                                         [--deployment LocalTest]
-
-Then verify via REST API or run the stress tests.
-"""
+"""Provision 10 Extracts + 10 Replicats via AdminClient in Docker (see --help)."""
 
 import argparse
 import subprocess

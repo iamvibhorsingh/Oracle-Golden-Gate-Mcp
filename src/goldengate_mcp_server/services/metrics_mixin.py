@@ -11,11 +11,6 @@ logger = logging.getLogger(__name__)
 
 
 class MetricsCollectionMixin:
-    """
-    Requires: clients, metrics_store, _shutdown_event, _get_deployment_health,
-    and _metrics_task, _last_metrics_cleanup_monotonic on the host class.
-    """
-
     clients: Dict[str, Any]
     metrics_store: Any
     _shutdown_event: asyncio.Event

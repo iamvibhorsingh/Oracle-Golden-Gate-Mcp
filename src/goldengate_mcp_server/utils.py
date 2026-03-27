@@ -1,6 +1,4 @@
-"""
-Shared parsing and small utilities for GoldenGate MCP server.
-"""
+"""Shared helpers for the GoldenGate MCP server."""
 
 from __future__ import annotations
 

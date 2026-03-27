@@ -1,9 +1,4 @@
-"""
-Database Performance Monitoring
-
-Monitors source and target databases to correlate with GoldenGate performance.
-Helps identify if lag is caused by database-side issues.
-"""
+"""Optional Oracle DB health checks to correlate with GoldenGate lag."""
 
 import asyncio
 import logging
@@ -15,23 +10,10 @@ logger = logging.getLogger(__name__)
 
 
 class DatabaseMonitor:
-    """
-    Monitors database performance metrics to correlate with GoldenGate issues.
-
-    Supports Oracle Database initially, with extensibility for other databases.
-    """
-
     def __init__(self, db_connections: Optional[Dict[str, Any]] = None):
-        """
-        Initialize database monitor.
-
-        Args:
-            db_connections: Dictionary of database connection configs
-        """
         self.db_connections = db_connections or {}
         self.oracle_available = False
 
-        # Try to import Oracle database library
         try:
             import oracledb  # noqa: F401
             self.oracle_available = True
@@ -43,15 +25,6 @@ class DatabaseMonitor:
         self,
         db_name: str
     ) -> Dict[str, Any]:
-        """
-        Check source database health and performance.
-
-        Args:
-            db_name: Database identifier
-
-        Returns:
-            Health metrics
-        """
         if db_name not in self.db_connections:
             return {
                 "status": "unknown",
@@ -70,8 +43,6 @@ class DatabaseMonitor:
             }
 
     async def _check_oracle_health(self, db_config: Dict[str, Any]) -> Dict[str, Any]:
-        """Check Oracle database health."""
-
         if not self.oracle_available:
             return {
                 "status": "unavailable",
@@ -88,7 +59,6 @@ class DatabaseMonitor:
         }
 
         try:
-            # Create connection
             connection = await asyncio.to_thread(
                 oracledb.connect,
                 user=db_config["username"],
@@ -98,7 +68,6 @@ class DatabaseMonitor:
 
             cursor = connection.cursor()
 
-            # Get database load
             cursor.execute("""
                 SELECT
                     metric_name,
@@ -181,7 +150,6 @@ class DatabaseMonitor:
                         "impact": "GoldenGate Extract may not capture all changes correctly"
                     })
 
-            # Check tablespace usage
             cursor.execute("""
                 SELECT
                     tablespace_name,
@@ -215,11 +183,6 @@ class DatabaseMonitor:
         self,
         db_name: str
     ) -> Dict[str, Any]:
-        """
-        Check target database health and performance.
-
-        Similar to source checks but focused on write performance.
-        """
         # Reuse the same health check for now
         # In a full implementation, you'd add target-specific checks
         return await self.check_source_database_health(db_name)
@@ -229,16 +192,6 @@ class DatabaseMonitor:
         db_name: str,
         username: str
     ) -> Dict[str, Any]:
-        """
-        Get information about GoldenGate database sessions.
-
-        Args:
-            db_name: Database identifier
-            username: GoldenGate database username
-
-        Returns:
-            Session information
-        """
         if db_name not in self.db_connections:
             return {
                 "error": f"Database {db_name} not configured"
@@ -256,8 +209,6 @@ class DatabaseMonitor:
         db_config: Dict[str, Any],
         gg_username: str
     ) -> Dict[str, Any]:
-        """Get Oracle session info for GoldenGate user."""
-
         import oracledb
 
         session_info = {

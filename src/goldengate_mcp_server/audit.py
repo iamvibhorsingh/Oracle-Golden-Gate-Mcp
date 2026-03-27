@@ -1,9 +1,4 @@
-"""
-Audit logging for GoldenGate MCP Server.
-
-Provides comprehensive audit trail for all operations, supporting
-compliance and security requirements.
-"""
+"""JSON audit log for MCP tool actions and results."""
 
 import json
 import logging
@@ -29,34 +24,23 @@ class AuditLogger:
     """
 
     def __init__(self, log_path: str):
-        """
-        Initialize audit logger.
-
-        Args:
-            log_path: Path to audit log file
-        """
         self.log_path = Path(log_path)
         self.lock = Lock()
 
-        # Create log directory if it doesn't exist
         self.log_path.parent.mkdir(parents=True, exist_ok=True)
 
-        # Set up file handler
         self.logger = logging.getLogger("audit")
         self.logger.setLevel(logging.INFO)
 
-        # Create file handler
         handler = logging.FileHandler(self.log_path)
         handler.setLevel(logging.INFO)
 
-        # Create formatter
         formatter = logging.Formatter(
             '%(asctime)s - %(message)s',
             datefmt='%Y-%m-%d %H:%M:%S'
         )
         handler.setFormatter(formatter)
 
-        # Add handler if not already added
         if not self.logger.handlers:
             self.logger.addHandler(handler)
 
@@ -68,16 +52,6 @@ class AuditLogger:
         user: Optional[str] = None,
         session_id: Optional[str] = None
     ):
-        """
-        Log an action being performed.
-
-        Args:
-            action: Name of the action
-            arguments: Action arguments
-            timestamp: Action timestamp (defaults to now)
-            user: User performing the action
-            session_id: Session identifier
-        """
         if timestamp is None:
             timestamp = datetime.utcnow()
 
@@ -106,17 +80,6 @@ class AuditLogger:
         user: Optional[str] = None,
         session_id: Optional[str] = None
     ):
-        """
-        Log the result of an action.
-
-        Args:
-            action: Name of the action
-            success: Whether the action succeeded
-            timestamp: Result timestamp (defaults to now)
-            error: Error message if action failed
-            user: User who performed the action
-            session_id: Session identifier
-        """
         if timestamp is None:
             timestamp = datetime.utcnow()
 
@@ -144,15 +107,6 @@ class AuditLogger:
         severity: str = "info",
         timestamp: Optional[datetime] = None
     ):
-        """
-        Log a security-related event.
-
-        Args:
-            event_type: Type of security event
-            details: Event details
-            severity: Event severity (info, warning, error, critical)
-            timestamp: Event timestamp (defaults to now)
-        """
         if timestamp is None:
             timestamp = datetime.utcnow()
 
@@ -177,16 +131,6 @@ class AuditLogger:
         error: Optional[str] = None,
         timestamp: Optional[datetime] = None
     ):
-        """
-        Log an authentication attempt.
-
-        Args:
-            deployment: Deployment being accessed
-            success: Whether authentication succeeded
-            username: Username used
-            error: Error message if failed
-            timestamp: Event timestamp (defaults to now)
-        """
         if timestamp is None:
             timestamp = datetime.utcnow()
 
@@ -217,15 +161,6 @@ class AuditLogger:
         return arguments
 
     def get_recent_entries(self, count: int = 100) -> list:
-        """
-        Get recent audit log entries.
-
-        Args:
-            count: Number of entries to retrieve
-
-        Returns:
-            List of log entries
-        """
         entries = []
 
         try:

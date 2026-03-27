@@ -1,6 +1,4 @@
-"""
-Tests for MetricsStore functionality.
-"""
+"""MetricsStore tests."""
 
 from datetime import datetime, timedelta
 from pathlib import Path

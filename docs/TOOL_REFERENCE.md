@@ -56,9 +56,13 @@ Supporting context:
 
 - `deployment`, `process`, `baseline_stats` (from `MetricsStore.calculate_baseline`), `hourly_pattern`, `note`
 
+> **Note:** Requires history to have accumulated in the metrics store (7-day window). Returns `"Insufficient data"` on a fresh instance until the background collection loop has run for a reasonable period.
+
 ## `get_lag_trend`
 
 - `deployment`, `process`, `time_range`, `data_points`, `trend{...}`, `history[]`
+
+> **Note:** Returns empty history on a fresh instance. Data populates automatically via the 5-minute background collection loop as long as the process is running.
 
 ## `get_troubleshooting_guide`
 

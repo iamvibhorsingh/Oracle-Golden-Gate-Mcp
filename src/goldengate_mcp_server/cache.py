@@ -1,9 +1,4 @@
-"""
-Simple caching layer to reduce load on GoldenGate REST API.
-
-This is NOT for cost optimization (Azure Copilot Enterprise has different pricing).
-This is to prevent hammering your GoldenGate servers with repeated identical queries.
-"""
+"""In-memory TTL cache and async rate limiter for GoldenGate REST calls."""
 
 import asyncio
 import logging
@@ -26,20 +21,12 @@ class SimpleCache:
     """
 
     def __init__(self, ttl_seconds: int = 30):
-        """
-        Initialize cache.
-
-        Args:
-            ttl_seconds: Time to live for cached data (default 30 seconds)
-                        Short TTL ensures data is fresh for operations
-        """
         self.cache: Dict[str, Tuple[Any, datetime]] = {}
         self.ttl = timedelta(seconds=ttl_seconds)
         self.hits = 0
         self.misses = 0
 
     def get(self, key: str) -> Optional[Any]:
-        """Get cached value if not expired."""
         if key in self.cache:
             value, timestamp = self.cache[key]
             if datetime.utcnow() - timestamp < self.ttl:
@@ -55,23 +42,19 @@ class SimpleCache:
         return None
 
     def set(self, key: str, value: Any):
-        """Set cached value with current timestamp."""
         self.cache[key] = (value, datetime.utcnow())
         logger.debug(f"Cache SET: {key}")
 
     def invalidate(self, key: str):
-        """Invalidate specific cache entry."""
         if key in self.cache:
             del self.cache[key]
             logger.debug(f"Cache INVALIDATE: {key}")
 
     def clear(self):
-        """Clear all cache."""
         self.cache.clear()
         logger.info("Cache cleared")
 
     def stats(self) -> Dict[str, Any]:
-        """Get cache statistics."""
         total = self.hits + self.misses
         hit_rate = (self.hits / total * 100) if total > 0 else 0
 
@@ -88,18 +71,9 @@ class RateLimiter:
     Rate limiter to prevent overwhelming GoldenGate REST API.
 
     Use case: Batch operation on 50 processes shouldn't DoS your GoldenGate server.
-
-    This is infrastructure protection, not cost optimization.
     """
 
     def __init__(self, max_concurrent: int = 10, requests_per_second: int = 20):
-        """
-        Initialize rate limiter.
-
-        Args:
-            max_concurrent: Maximum concurrent requests (default 10)
-            requests_per_second: Maximum requests per second (default 20)
-        """
         self.semaphore = asyncio.Semaphore(max_concurrent)
         self.rps = requests_per_second
         self.last_request_time = datetime.utcnow()

@@ -1,6 +1,4 @@
-"""
-Tests for DatabaseMonitor functionality.
-"""
+"""DatabaseMonitor tests."""
 
 import sys
 from unittest.mock import AsyncMock, MagicMock, patch

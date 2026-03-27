@@ -1,12 +1,4 @@
-"""
-Integration test for GoldenGate local replication.
-Inserts data into GG_SRC and verifies it replicates to GG_TGT.
-Also checks Extract/Replicat status via the GoldenGate REST API.
-
-Prerequisites:
-    pip install oracledb httpx python-dotenv
-    python setup_local_replication.py   (must succeed first)
-"""
+"""End-to-end replication smoke test (requires setup_local_replication.py first)."""
 
 import time
 import os

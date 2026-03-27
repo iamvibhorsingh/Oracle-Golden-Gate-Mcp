@@ -1,6 +1,4 @@
-"""
-Typed tool outputs and deterministic severity classification.
-"""
+"""Typed tool outputs and lag severity classification."""
 
 from __future__ import annotations
 
@@ -34,11 +32,6 @@ def classify_severity(
     baseline_p95: Optional[float],
     status: str,
 ) -> Severity:
-    """
-    Pure function: severity from current lag, baseline, and process status.
-
-    Thresholds are documented in the project README.
-    """
     if status != "running":
         return "critical"
 
@@ -71,8 +64,6 @@ def classify_severity(
 
 
 class ProcessLag(BaseModel):
-    """Structured lag response for Extract/Replicat tools."""
-
     deployment: str
     process_name: str
     process_type: ProcessType
@@ -103,7 +94,6 @@ def _normalize_status(raw: Optional[str]) -> ProcessStatus:
 
 
 def status_for_lag_severity(raw: Optional[str], lag_seconds: Optional[float]) -> str:
-    """How to classify lag anomaly when API status is missing or ambiguous."""
     s = (raw or "").lower()
     if s == "running":
         return "running"
@@ -121,7 +111,6 @@ def build_process_lag_payload(
     lag_api_data: dict[str, Any],
     metrics_store: MetricsStore,
 ) -> dict[str, Any]:
-    """Build a ProcessLag dict with baseline from MetricsStore."""
     status = _normalize_status(lag_api_data.get("status"))
     lag_seconds = parse_lag_duration(lag_api_data.get("lag"))
 

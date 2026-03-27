@@ -58,19 +58,12 @@ async def health_check():
 
 @app.get("/api/tools")
 async def get_tools():
-    """List all available tools and their schemas."""
     from .tools import all_tools
     tools = all_tools()
     return {"tools": [t.model_dump() for t in tools]}
 
 @app.post("/api/tools/execute")
 async def execute_tool(request: ToolRequest):
-    """
-    Execute an MCP tool by name with the same arguments as MCP `call_tool`.
-
-    Example (note parameter names match each tool's schema):
-    {"name": "get_replicat_lag", "arguments": {"deployment": "gg21", "replicat_name": "RPT01"}}
-    """
     if mcp_server is None:
         raise HTTPException(status_code=503, detail="Server is still starting")
 

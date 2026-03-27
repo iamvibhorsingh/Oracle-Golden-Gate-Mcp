@@ -1,9 +1,4 @@
-"""
-GoldenGate REST API Client
-
-Handles all interactions with Oracle GoldenGate Microservices REST API.
-Includes comprehensive error handling, retry logic, and security features.
-"""
+"""Async HTTP client for the GoldenGate Microservices REST API."""
 
 import logging
 from typing import Any, Dict, Optional
@@ -40,11 +35,7 @@ def _is_transient_request_error(exc: BaseException) -> bool:
 
 
 class GoldenGateClient:
-    """
-    Client for Oracle GoldenGate Microservices REST API.
-
-    Supports GoldenGate versions 21.x and 23.x
-    """
+    """GoldenGate Microservices REST API client (GG 21.x / 23.x)."""
 
     def __init__(
         self,
@@ -57,33 +48,18 @@ class GoldenGateClient:
         max_concurrent: int = 10,
         requests_per_second: int = 20
     ):
-        """
-        Initialize GoldenGate API client.
-
-        Args:
-            base_url: Base URL of the GoldenGate deployment (e.g., https://host:port)
-            username: Username for authentication
-            password: Password for authentication
-            verify_ssl: Whether to verify SSL certificates
-            timeout: Request timeout in seconds
-            cache_ttl: Cache TTL in seconds (default 30)
-            max_concurrent: Max concurrent requests (default 10)
-            requests_per_second: Max requests per second (default 20)
-        """
         self.base_url = base_url.rstrip('/')
         self.username = username
         self.password = password
         self.verify_ssl = verify_ssl
         self.timeout = timeout
 
-        # Add caching and rate limiting
         self.cache = SimpleCache(ttl_seconds=cache_ttl)
         self.rate_limiter = RateLimiter(
             max_concurrent=max_concurrent,
             requests_per_second=requests_per_second
         )
 
-        # Create HTTP client with security settings
         self.client = httpx.AsyncClient(
             auth=(username, password),
             verify=verify_ssl,
@@ -99,11 +75,9 @@ class GoldenGateClient:
             logger.warning(f"SSL verification disabled for {base_url}")
 
     async def __aenter__(self):
-        """Async context manager entry."""
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
-        """Async context manager exit."""
         await self.client.aclose()
 
     async def _request(
@@ -114,23 +88,6 @@ class GoldenGateClient:
         params: Optional[Dict[str, Any]] = None,
         use_cache: bool = True
     ) -> Dict[str, Any]:
-        """
-        Make an authenticated request to the GoldenGate API.
-
-        Args:
-            method: HTTP method (GET, POST, PUT, DELETE, PATCH)
-            endpoint: API endpoint path
-            data: JSON data for request body
-            params: Query parameters
-            use_cache: Whether to use cache for GET requests (default True)
-
-        Returns:
-            Response JSON data
-
-        Raises:
-            GoldenGateAPIError: On API errors
-        """
-        # Check cache for GET requests
         if method == "GET" and use_cache:
             cache_key = f"{endpoint}:{params}"
             cached_response = self.cache.get(cache_key)
@@ -139,7 +96,6 @@ class GoldenGateClient:
 
         url = urljoin(self.base_url, endpoint)
 
-        # Apply rate limiting
         await self.rate_limiter.acquire()
 
         try:
@@ -147,7 +103,6 @@ class GoldenGateClient:
                 method, url, data, params
             )
 
-            # Cache GET responses
             if method == "GET" and use_cache:
                 cache_key = f"{endpoint}:{params}"
                 self.cache.set(cache_key, result)
@@ -910,7 +865,6 @@ class GoldenGateClient:
     # ==================== Connection Management ====================
 
     async def close(self):
-        """Close the HTTP client connection."""
         await self.client.aclose()
         logger.debug(f"Closed connection to {self.base_url}")
 

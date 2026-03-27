@@ -1,9 +1,4 @@
-"""
-Metrics Storage for Historical Data Tracking
-
-Provides storage and retrieval of GoldenGate metrics over time
-to enable trending, baseline analysis, and anomaly detection.
-"""
+"""SQLite-backed storage for GoldenGate lag, stats, and health snapshots."""
 
 import json
 import logging
@@ -19,21 +14,9 @@ logger = logging.getLogger(__name__)
 
 
 class MetricsStore:
-    """
-    Stores and retrieves historical GoldenGate metrics.
-
-    Uses SQLite for persistent storage with automatic retention policies.
-    """
+    """Historical GoldenGate metrics in SQLite."""
 
     def __init__(self, db_path: str = "./data/metrics.db", use_wal: bool = True):
-        """
-        Initialize metrics store.
-
-        Args:
-            db_path: Path to SQLite database file
-            use_wal: Enable SQLite WAL mode (recommended in production;
-                disable in some test environments)
-        """
         db_str = str(db_path)
         self.use_wal = use_wal
         self._connect_kwargs: dict = {}
@@ -55,7 +38,6 @@ class MetricsStore:
         logger.info(f"Metrics store initialized at {db_path}")
 
     def _init_database(self):
-        """Initialize database schema."""
         with sqlite3.connect(str(self.db_path), **self._connect_kwargs) as conn:
             if self.use_wal:
                 conn.execute("PRAGMA journal_mode=WAL")
@@ -130,16 +112,6 @@ class MetricsStore:
         lag_data: Dict[str, Any],
         timestamp: Optional[datetime] = None
     ):
-        """
-        Record a lag metric data point.
-
-        Args:
-            deployment: Deployment name
-            process_name: Process name
-            process_type: 'extract' or 'replicat'
-            lag_data: Lag data from GoldenGate API
-            timestamp: Metric timestamp (defaults to now)
-        """
         if timestamp is None:
             timestamp = datetime.utcnow()
 
@@ -171,16 +143,6 @@ class MetricsStore:
         stats_data: Dict[str, Any],
         timestamp: Optional[datetime] = None
     ):
-        """
-        Record process statistics data point.
-
-        Args:
-            deployment: Deployment name
-            process_name: Process name
-            process_type: 'extract' or 'replicat'
-            stats_data: Statistics from GoldenGate API
-            timestamp: Metric timestamp (defaults to now)
-        """
         if timestamp is None:
             timestamp = datetime.utcnow()
 
@@ -208,18 +170,9 @@ class MetricsStore:
         health_data: Dict[str, Any],
         timestamp: Optional[datetime] = None
     ):
-        """
-        Record a deployment health snapshot.
-
-        Args:
-            deployment: Deployment name
-            health_data: Health summary data
-            timestamp: Snapshot timestamp (defaults to now)
-        """
         if timestamp is None:
             timestamp = datetime.utcnow()
 
-        # Calculate statistics
         extracts = health_data.get("extracts", [])
         replicats = health_data.get("replicats", [])
         all_processes = extracts + replicats
@@ -229,7 +182,6 @@ class MetricsStore:
         stopped = sum(1 for p in all_processes if p.get("status") == "stopped")
         abended = sum(1 for p in all_processes if p.get("status") == "abended")
 
-        # Calculate lag statistics
         lag_values = []
         for process in all_processes:
             if "lag" in process and process.get("status") == "running":
@@ -264,17 +216,6 @@ class MetricsStore:
         process_name: str,
         hours: int = 24
     ) -> List[Dict[str, Any]]:
-        """
-        Get historical lag data for a process.
-
-        Args:
-            deployment: Deployment name
-            process_name: Process name
-            hours: Number of hours of history to retrieve
-
-        Returns:
-            List of lag data points
-        """
         cutoff = datetime.utcnow() - timedelta(hours=hours)
 
         with sqlite3.connect(str(self.db_path), **self._connect_kwargs) as conn:
@@ -292,16 +233,6 @@ class MetricsStore:
         deployment: str,
         hours: int = 24
     ) -> List[Dict[str, Any]]:
-        """
-        Get historical health snapshots for a deployment.
-
-        Args:
-            deployment: Deployment name
-            hours: Number of hours of history to retrieve
-
-        Returns:
-            List of health snapshots
-        """
         cutoff = datetime.utcnow() - timedelta(hours=hours)
 
         with sqlite3.connect(str(self.db_path), **self._connect_kwargs) as conn:
@@ -320,17 +251,6 @@ class MetricsStore:
         process_name: str,
         days: int = 7
     ) -> Dict[str, Any]:
-        """
-        Calculate baseline statistics for a process.
-
-        Args:
-            deployment: Deployment name
-            process_name: Process name
-            days: Number of days to use for baseline
-
-        Returns:
-            Baseline statistics (mean, std_dev, percentiles)
-        """
         history = self.get_lag_history(deployment, process_name, hours=days * 24)
 
         if not history:
@@ -376,20 +296,8 @@ class MetricsStore:
         process_name: str,
         days: int = 7
     ) -> Dict[int, Dict[str, float]]:
-        """
-        Get average lag by hour of day to identify patterns.
-
-        Args:
-            deployment: Deployment name
-            process_name: Process name
-            days: Number of days to analyze
-
-        Returns:
-            Dictionary mapping hour (0-23) to statistics
-        """
         history = self.get_lag_history(deployment, process_name, hours=days * 24)
 
-        # Group by hour
         hourly_data = {h: [] for h in range(24)}
 
         for record in history:
@@ -398,7 +306,6 @@ class MetricsStore:
                 hour = timestamp.hour
                 hourly_data[hour].append(record["lag_seconds"])
 
-        # Calculate statistics for each hour
         hourly_stats = {}
         for hour, values in hourly_data.items():
             if values:
@@ -412,12 +319,6 @@ class MetricsStore:
         return hourly_stats
 
     def cleanup_old_data(self, retention_days: int = 30):
-        """
-        Remove data older than retention period.
-
-        Args:
-            retention_days: Number of days to retain
-        """
         cutoff = datetime.utcnow() - timedelta(days=retention_days)
 
         with sqlite3.connect(str(self.db_path), **self._connect_kwargs) as conn:
@@ -434,5 +335,4 @@ class MetricsStore:
 
     @staticmethod
     def _parse_lag_to_seconds(lag_str: Optional[str]) -> Optional[float]:
-        """Backward-compatible alias for :func:`parse_lag_duration`."""
         return parse_lag_duration(lag_str)

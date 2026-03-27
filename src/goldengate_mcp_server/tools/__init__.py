@@ -1,9 +1,4 @@
-"""
-Per-domain MCP tool definitions and dispatch registration.
-
-``server.GoldenGateMCPServer`` imports :func:`registry.all_tools` and
-:func:`registry.build_dispatch` so schemas and routing stay modular.
-"""
+"""MCP tool schemas and dispatch (`all_tools`, `build_dispatch`)."""
 
 from .registry import ToolHandler, all_tools, build_dispatch
 

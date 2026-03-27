@@ -1,26 +1,4 @@
-"""
-Stress test for GoldenGate MCP Server tool calls.
-
-Exercises all 24 MCP tools against a live GoldenGate deployment with
-10 Extracts and 10 Replicats. Validates response structure and content
-rather than exact values, since the Free edition may limit some features.
-
-Prerequisites:
-    docker compose --env-file .env.local up -d
-    bash scripts/setup_gg_processes.sh
-    python scripts/generate_load.py --duration 60 &   # optional background load
-
-Run:
-    pytest tests/integration/test_stress_mcp.py -v --tb=short
-
-Environment variables (or .env.local):
-    GG_DEPLOYMENT_1_NAME=LocalTest
-    GG_DEPLOYMENT_1_URL=https://localhost:9100
-    GG_DEPLOYMENT_1_USERNAME=oggadmin
-    GG_DEPLOYMENT_1_PASSWORD=Welcome1
-    GG_DEPLOYMENT_1_VERIFY_SSL=false
-    GG_READ_ONLY=false
-"""
+"""Live MCP stress test: many tools against docker-compose GG (see .env.local)."""
 
 import asyncio
 import json

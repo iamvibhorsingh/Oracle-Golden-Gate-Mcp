@@ -1,10 +1,4 @@
-"""
-Setup script for local GoldenGate Free replication testing.
-Creates credentials, Extract (EXT1), and Replicat (REP1) via the REST API.
-
-Usage:
-    python setup_local_replication.py
-"""
+"""Bootstrap local GG Free: credentials, EXT1, REP1 via REST API."""
 
 import os
 import time
@@ -178,7 +172,6 @@ register extract EXT1 database
                     print(f"   ✗ Adminclient returned an error: {out}")
                 else:
                     print("   ✓ EXT1 registered with database")
-                    # print(out) # debug if needed
         except Exception as e:
             print(f"   ✗ Failed to register EXT1: {e}")
 

@@ -1,9 +1,4 @@
-"""
-Intelligent Diagnostics Engine for GoldenGate
-
-Provides root cause analysis, anomaly detection, and intelligent
-troubleshooting for GoldenGate replication issues.
-"""
+"""Lag diagnostics using live API data plus MetricsStore history."""
 
 import logging
 import statistics
@@ -39,13 +34,6 @@ class DiagnosticsEngine:
     """
 
     def __init__(self, metrics_store, goldengate_clients: Dict):
-        """
-        Initialize diagnostics engine.
-
-        Args:
-            metrics_store: MetricsStore instance for historical data
-            goldengate_clients: Dictionary of GoldenGate clients by deployment
-        """
         self.metrics_store = metrics_store
         self.clients = goldengate_clients
 
@@ -55,17 +43,6 @@ class DiagnosticsEngine:
         process_name: str,
         process_type: str
     ) -> Dict[str, Any]:
-        """
-        Perform comprehensive root cause analysis for lag issues.
-
-        Args:
-            deployment: Deployment name
-            process_name: Process name
-            process_type: 'extract' or 'replicat'
-
-        Returns:
-            Diagnosis with likely causes, evidence, and recommendations
-        """
         logger.info(f"Diagnosing lag issue for {deployment}/{process_name}")
 
         diagnosis: Dict[str, Any] = {
@@ -439,7 +416,6 @@ class DiagnosticsEngine:
         expected_mean = expected.get("mean", 0)
         expected_max = expected.get("max", 0)
 
-        # Current lag is normal for this hour
         if current_lag <= expected_mean * 1.5:
             return {
                 "cause": "Current lag is normal for this time of day",
@@ -592,15 +568,6 @@ class TroubleshootingGuide:
 
     @staticmethod
     def get_troubleshooting_guide(symptoms: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Get a troubleshooting guide based on observed symptoms.
-
-        Args:
-            symptoms: Dictionary of symptoms (e.g., high_lag=True, abended=True)
-
-        Returns:
-            Structured troubleshooting guide
-        """
         guide = {
             "symptom_analysis": symptoms,
             "steps": [],

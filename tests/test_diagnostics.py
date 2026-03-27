@@ -1,6 +1,4 @@
-"""
-Tests for DiagnosticsEngine functionality.
-"""
+"""DiagnosticsEngine and TroubleshootingGuide tests."""
 
 from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock
