@@ -49,6 +49,12 @@ class Config(BaseModel):
         description="Path to metrics SQLite database"
     )
 
+    enable_metrics: bool = Field(
+        default=False,
+        description="Enable background metrics collection and SQLite storage. "
+        "Set to false for a lightweight, pure REST pass-through mode."
+    )
+
     # Performance settings
     cache_ttl_seconds: int = Field(
         default=30,
@@ -108,6 +114,7 @@ class Config(BaseModel):
         """
         # Basic settings
         read_only = os.getenv("GG_READ_ONLY", "true").lower() == "true"
+        enable_metrics = os.getenv("GG_ENABLE_METRICS", "false").lower() == "true"
         request_timeout = int(os.getenv("GG_REQUEST_TIMEOUT", "30"))
         audit_log_path = os.getenv("GG_AUDIT_LOG_PATH", "./logs/audit.log")
         metrics_db_path = os.getenv("GG_METRICS_DB_PATH", "./data/metrics.db")
@@ -162,6 +169,7 @@ class Config(BaseModel):
 
         return cls(
             read_only=read_only,
+            enable_metrics=enable_metrics,
             request_timeout=request_timeout,
             audit_log_path=audit_log_path,
             metrics_db_path=metrics_db_path,

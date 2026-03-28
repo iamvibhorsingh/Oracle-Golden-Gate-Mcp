@@ -32,7 +32,15 @@ GG_DEPLOYMENT_1_VERIFY_SSL=true  # Always in production
 - Includes timestamps, actions, results
 - Review regularly for security monitoring
 
-### 5. Input Validation
+### 5. Metrics Storage (Optional)
+```bash
+GG_ENABLE_METRICS=false  # Disables SQLite store and background collection
+```
+- When disabled: no local files written beyond the audit log, reduced attack surface
+- When enabled (default): SQLite DB at `GG_METRICS_DB_PATH` — restrict file permissions (`chmod 600`) if the host is shared
+- Disabling metrics removes three tools from the server (`diagnose_lag_issue`, `get_performance_baseline`, `get_lag_trend`) — acceptable trade-off for environments where local storage is a concern
+
+### 6. Input Validation
 - Process names sanitized (alphanumeric + underscore only)
 - Prevents injection attacks
 - All inputs validated with Pydantic

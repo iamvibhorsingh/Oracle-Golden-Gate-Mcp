@@ -20,6 +20,8 @@ class MetricsCollectionMixin:
     _METRICS_CONCURRENCY = 50
 
     async def _collect_single_deployment(self, deployment_name: str, client: Any) -> None:
+        if self.metrics_store is None:
+            return
         try:
             extracts = await client.list_extracts()
             for extract in extracts.get("items", []):

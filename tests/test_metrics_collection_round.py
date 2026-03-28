@@ -27,6 +27,7 @@ async def test_metrics_collection_round_records_lag(tmp_path, monkeypatch):
 
     cfg = Config(
         read_only=True,
+        enable_metrics=True,
         request_timeout=5,
         audit_log_path=str(tmp_path / "audit.log"),
         deployments=[

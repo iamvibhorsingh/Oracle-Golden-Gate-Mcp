@@ -4,6 +4,8 @@ Tools return JSON serialized as text in the MCP `TextContent` payload (`indent=2
 
 Severity where used is always one of: `normal` | `elevated` | `high` | `critical` (see README threshold table and `classify_severity`).
 
+> **Metrics-dependent tools** — `diagnose_lag_issue`, `get_performance_baseline`, and `get_lag_trend` require `GG_ENABLE_METRICS=true` (the default). When `GG_ENABLE_METRICS=false` these tools are not registered and will not appear in `list_tools`. All other tools are available regardless of the metrics setting.
+
 ---
 
 ## `get_extract_lag` / `get_replicat_lag`
@@ -19,11 +21,11 @@ Structured lag object (Pydantic model `ProcessLag`). Key fields:
 | `lag_seconds` | number \| null | Parsed lag |
 | `lag_at_checkpoint` | string \| null | API lag-at-checkpoint text |
 | `time_since_checkpoint` | string \| null | API time-since-checkpoint text |
-| `baseline_mean_seconds` | number \| null | 7-day mean from MetricsStore |
-| `baseline_p95_seconds` | number \| null | 7-day p95 |
-| `baseline_std_dev_seconds` | number \| null | 7-day std dev |
-| `baseline_data_points` | int | Count of baseline samples |
-| `deviation_sigma` | number \| null | (current − mean) / σ when σ > 0 |
+| `baseline_mean_seconds` | number \| null | 7-day mean from MetricsStore (null if `GG_ENABLE_METRICS=false`) |
+| `baseline_p95_seconds` | number \| null | 7-day p95 (null if metrics disabled) |
+| `baseline_std_dev_seconds` | number \| null | 7-day std dev (null if metrics disabled) |
+| `baseline_data_points` | int | Count of baseline samples (0 if metrics disabled) |
+| `deviation_sigma` | number \| null | (current − mean) / σ when σ > 0 (null if metrics disabled) |
 | `severity` | string | Deterministic label |
 | `raw_lag` | object | Original API lag payload |
 | `collected_at_utc` | string | ISO timestamp |
@@ -40,6 +42,8 @@ Structured lag object (Pydantic model `ProcessLag`). Key fields:
 
 ## `diagnose_lag_issue`
 
+> ⚠️ Requires `GG_ENABLE_METRICS=true`. Not available in pure REST pass-through mode.
+
 Primary numeric fields (always prefer these for reasoning):
 
 - `current_lag_seconds`, `baseline_mean_seconds`, `baseline_std_dev_seconds`, `baseline_p95_seconds`
@@ -54,11 +58,15 @@ Supporting context:
 
 ## `get_performance_baseline`
 
+> ⚠️ Requires `GG_ENABLE_METRICS=true`. Not available in pure REST pass-through mode.
+
 - `deployment`, `process`, `baseline_stats` (from `MetricsStore.calculate_baseline`), `hourly_pattern`, `note`
 
 > **Note:** Requires history to have accumulated in the metrics store (7-day window). Returns `"Insufficient data"` on a fresh instance until the background collection loop has run for a reasonable period.
 
 ## `get_lag_trend`
+
+> ⚠️ Requires `GG_ENABLE_METRICS=true`. Not available in pure REST pass-through mode.
 
 - `deployment`, `process`, `time_range`, `data_points`, `trend{...}`, `history[]`
 
@@ -127,4 +135,4 @@ Tool **schemas** and **dispatch** registrations live under `src/goldengate_mcp_s
 | `operational.py` | list_trails, get_trail_info, get_all_process_health |
 | `config_mgmt.py` | backup_deployment_config, get_process_config, compare_deployment_configs |
 
-`server.py` wires `all_tools()` and `build_dispatch(self)` into the MCP server.
+`server.py` wires `all_tools(enable_metrics=...)` and `build_dispatch(self, enable_metrics=...)` into the MCP server. When `GG_ENABLE_METRICS=false`, `METRICS_DEPENDENT_TOOLS` (`diagnose_lag_issue`, `get_performance_baseline`, `get_lag_trend`) are excluded from both the tool list and the dispatch table.

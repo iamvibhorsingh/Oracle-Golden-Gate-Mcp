@@ -32,7 +32,7 @@ Full rules are implemented in `goldengate_mcp_server.models.classify_severity`. 
 |---------|----------------|----------------------|
 | **Natural Language** | ✅ Ask "why is replication slow?" | ❌ Click through menus |
 | **Root Cause Analysis** | ✅ AI diagnoses issues | ❌ Shows symptoms only |
-| **Historical Analysis** | ✅ 30-day baselines & trends | ❌ Real-time only |
+| **Optional Historical Analysis** | ✅ 30-day baselines & trends | ❌ Real-time only |
 | **Multi-Deployment** | ✅ On-prem + cloud unified | ❌ Per-deployment only |
 | **GG 21.x Support** | ✅ Works with 21.x ([19c partial, 12.3+ with changes](docs/VERSION_COMPATIBILITY.md)) | ❌ Requires 23.x |
 | **Batch Operations** | ✅ Start/stop multiple processes | ❌ One at a time |
@@ -78,7 +78,12 @@ python -m goldengate_mcp_server
 GG_READ_ONLY=true                          # Default: true (read-only mode)
 GG_REQUEST_TIMEOUT=30                      # HTTP timeout in seconds
 GG_AUDIT_LOG_PATH=./logs/audit.log         # Audit trail (credentials redacted)
-GG_METRICS_DB_PATH=./data/metrics.db       # SQLite store for baselines (30-day retention)
+
+# Metrics (optional — disable for pure REST pass-through with no local storage)
+GG_ENABLE_METRICS=false                     # Default: false. Set true to enable SQLite,
+                                           # background collection, and baseline tools.
+GG_METRICS_DB_PATH=./data/metrics.db       # SQLite store for baselines (30-day retention,
+                                           # ignored when GG_ENABLE_METRICS=false)
 
 # Performance tuning
 GG_CACHE_TTL_SECONDS=30                    # Response cache TTL (reduces GG API load)
@@ -151,9 +156,9 @@ The MCP server provides the following tools for AI assistants:
 
 ### Performance & Lag (Structured, AI-Friendly)
 - `get_extract_lag` / `get_replicat_lag` — **typed fields**: `lag_seconds`, `baseline_mean_seconds`, `baseline_p95_seconds`, `deviation_sigma`, `severity` enum, `raw_lag`, `collected_at_utc`
-- `diagnose_lag_issue` — numeric summary + root cause analysis + `contributing_factors` + recommendations
-- `get_performance_baseline` — 7-day statistics (mean, std dev, p95) + hourly pattern for capacity planning
-- `get_lag_trend` — 24-hour history with min/max/mean and direction indicator
+- `diagnose_lag_issue` — numeric summary + root cause analysis + `contributing_factors` + recommendations ⚠️ *requires metrics enabled*
+- `get_performance_baseline` — 7-day statistics (mean, std dev, p95) + hourly pattern for capacity planning ⚠️ *requires metrics enabled*
+- `get_lag_trend` — 24-hour history with min/max/mean and direction indicator ⚠️ *requires metrics enabled*
 - `get_deployment_health` — all processes + health summary in one call
 
 ### Trail & Configuration Management
@@ -379,8 +384,8 @@ mypy src/
 
 - **Caching**: Responses cached for `GG_CACHE_TTL_SECONDS` (default 30s) to reduce GG API load
 - **Rate Limiting**: Configurable via `GG_REQUESTS_PER_SECOND` (default 50) and `GG_MAX_CONCURRENT_REQUESTS` (default 20)
-- **Async Operations**: Built on async/await for excellent concurrency
-- **Metrics Store**: SQLite database (`GG_METRICS_DB_PATH`) maintains 30-day baselines for lag analysis
+- **Async Operations**: Built on async/await — background metrics collection runs up to 50 deployments concurrently
+- **Metrics Store** *(optional)*: SQLite database (`GG_METRICS_DB_PATH`) maintains 30-day baselines for lag analysis. Disable with `GG_ENABLE_METRICS=false` for a zero-storage, pure REST mode.
 - **Timeout Settings**: Adjust `GG_REQUEST_TIMEOUT` (default 30s) based on your network latency
 
 ## Limitations
@@ -389,7 +394,8 @@ mypy src/
 - **Trail endpoints**: `list_trails` and `get_trail_info` may not be available on GG Free edition (Enterprise only)
 - **Database correlation**: `check_database_correlation` requires optional oracledb monitoring config (`GG_ORACLEDB_*` env vars)
 - **Write operations**: `start_*`, `stop_*`, `batch_*` require `GG_READ_ONLY=false` and should be tested thoroughly before production use
-- **Background metrics collection cap**: The collection loop runs sequentially — approximately **~40 deployments** is the practical ceiling before rounds take longer than the 5-minute interval. This only affects historical metrics (`get_lag_trend`, `get_performance_baseline`); all live tools (`get_replicat_lag`, `diagnose_lag_issue`, etc.) target a single deployment on-demand and are unaffected by deployment count. This MCP is designed as a **per-user or per-team** tool — each instance should cover the deployments that user or team is responsible for, not a centralised monitor for an entire estate.
+- **Metrics mode vs pass-through mode**: Set `GG_ENABLE_METRICS=false` to disable the SQLite store and background collection entirely — no disk usage, no baseline tools (`diagnose_lag_issue`, `get_performance_baseline`, `get_lag_trend`). Useful for large-scale deployments (1000s of instances) where you only need live REST monitoring. When metrics are enabled, the background collection loop runs up to **50 deployments concurrently** — practical ceiling is network/disk throughput, not deployment count.
+- **SQLite storage at scale**: With metrics enabled, steady-state DB size grows with deployment count (~50 GB at 5000 deployments with 30-day retention). Size appropriately or use `GG_ENABLE_METRICS=false` if local storage is a constraint.
 
 ## Database Correlation (Optional)
 

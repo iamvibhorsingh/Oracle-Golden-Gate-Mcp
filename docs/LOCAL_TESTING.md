@@ -78,7 +78,8 @@ If running via an MCP client rather than a `.env` file, pass the environment var
       "GG_DEPLOYMENT_1_PASSWORD": "GGMCP_Admin123",
       "GG_DEPLOYMENT_1_VERIFY_SSL": "false",
       "GG_AUDIT_LOG_PATH": "/absolute/path/to/project/logs/audit.log",
-      "GG_METRICS_DB_PATH": "/absolute/path/to/project/data/metrics.db"
+      "GG_METRICS_DB_PATH": "/absolute/path/to/project/data/metrics.db",
+      "GG_ENABLE_METRICS": "true"
     }
   }
 }
@@ -164,6 +165,7 @@ docker compose down -v
   ```
 - **SSL verification must be disabled** for local Docker (`GG_DEPLOYMENT_1_VERIFY_SSL=false`) — GG Free uses a self-signed certificate
 - The MCP's sigma-based severity classification requires ~7 days of baseline data to produce meaningful lag alerts; on a fresh deployment all severity levels will show as `normal`
+- **Metrics disabled mode**: Set `GG_ENABLE_METRICS=false` to skip SQLite entirely — useful if you only want live status/lag checks without storing history locally. The three baseline tools (`diagnose_lag_issue`, `get_performance_baseline`, `get_lag_trend`) will not appear when metrics are disabled.
 
 ## Troubleshooting
 

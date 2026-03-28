@@ -41,7 +41,7 @@ from .services import (
     ServerCoreMixin,
     WriteMixin,
 )
-from .tools import all_tools, build_dispatch
+from .tools import all_tools, build_dispatch, METRICS_DEPENDENT_TOOLS
 
 logging.basicConfig(
     level=logging.INFO,
@@ -67,13 +67,22 @@ class GoldenGateMCPServer(
         self.clients: Dict[str, GoldenGateClient] = {}
         self.audit_logger = AuditLogger(config.audit_log_path)
 
-        self.metrics_store = MetricsStore(db_path=config.metrics_db_path)
-        self.metrics_store.cleanup_old_data(retention_days=30)
+        self._enable_metrics = config.enable_metrics
+
+        if self._enable_metrics:
+            self.metrics_store = MetricsStore(db_path=config.metrics_db_path)
+            self.metrics_store.cleanup_old_data(retention_days=30)
+        else:
+            self.metrics_store = None
+
         self.db_monitor = DatabaseMonitor(create_db_config_from_env())
 
         self._initialize_clients()
 
-        self.diagnostics = DiagnosticsEngine(self.metrics_store, self.clients)
+        if self._enable_metrics:
+            self.diagnostics = DiagnosticsEngine(self.metrics_store, self.clients)
+        else:
+            self.diagnostics = None
 
         self._metrics_task: Optional[asyncio.Task] = None
         self._shutdown_event = asyncio.Event()
@@ -81,13 +90,14 @@ class GoldenGateMCPServer(
 
         self._register_handlers()
 
-        self._start_metrics_collection()
+        if self._enable_metrics:
+            self._start_metrics_collection()
 
         logger.info("GoldenGate MCP Server initialized")
         logger.info("Read-only mode: %s", config.read_only)
         logger.info("Deployments configured: %s", len(self.clients))
-        logger.info("Metrics collection: enabled")
-        logger.info("Diagnostics engine: enabled")
+        logger.info("Metrics collection: %s", "enabled" if self._enable_metrics else "disabled")
+        logger.info("Diagnostics engine: %s", "enabled" if self._enable_metrics else "disabled")
 
     def _initialize_clients(self) -> None:
         for deployment in self.config.deployments:
@@ -112,11 +122,11 @@ class GoldenGateMCPServer(
                 )
 
     def _register_handlers(self) -> None:
-        self._tool_handlers = build_dispatch(self)
+        self._tool_handlers = build_dispatch(self, enable_metrics=self._enable_metrics)
 
         @self.server.list_tools()
         async def list_tools() -> List[Tool]:
-            return all_tools()
+            return all_tools(enable_metrics=self._enable_metrics)
 
         @self.server.call_tool()
         async def call_tool(name: str, arguments: Any) -> List[TextContent]:

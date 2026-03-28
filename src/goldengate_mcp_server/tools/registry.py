@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Awaitable, Callable, Dict, List
+from typing import Any, Awaitable, Callable, Dict, List, Set
 
 from mcp.types import Tool
 
@@ -17,10 +17,17 @@ from .write_ops import WRITE_TOOLS, register_write_handlers
 
 ToolHandler = Callable[[Any], Awaitable[Any]]
 
+# Tools that require MetricsStore / DiagnosticsEngine (background collection).
+METRICS_DEPENDENT_TOOLS: Set[str] = {
+    "diagnose_lag_issue",
+    "get_performance_baseline",
+    "get_lag_trend",
+}
 
-def all_tools() -> List[Tool]:
+
+def all_tools(*, enable_metrics: bool = True) -> List[Tool]:
     """Every Tool definition exposed by list_tools (order: deployment → config)."""
-    return [
+    tools = [
         *DEPLOYMENT_TOOLS,
         *EXTRACT_TOOLS,
         *REPLICAT_TOOLS,
@@ -30,9 +37,12 @@ def all_tools() -> List[Tool]:
         *OPERATIONAL_TOOLS,
         *CONFIG_TOOLS,
     ]
+    if not enable_metrics:
+        tools = [t for t in tools if t.name not in METRICS_DEPENDENT_TOOLS]
+    return tools
 
 
-def build_dispatch(app: Any) -> Dict[str, ToolHandler]:
+def build_dispatch(app: Any, *, enable_metrics: bool = True) -> Dict[str, ToolHandler]:
     """Map tool name → async handler(arguments: dict)."""
     dispatch: Dict[str, ToolHandler] = {}
     register_deployment_handlers(dispatch, app)
@@ -43,4 +53,7 @@ def build_dispatch(app: Any) -> Dict[str, ToolHandler]:
     register_diagnostics_handlers(dispatch, app)
     register_operational_handlers(dispatch, app)
     register_config_handlers(dispatch, app)
+    if not enable_metrics:
+        for name in METRICS_DEPENDENT_TOOLS:
+            dispatch.pop(name, None)
     return dispatch
