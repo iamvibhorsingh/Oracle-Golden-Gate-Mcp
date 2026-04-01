@@ -1,7 +1,7 @@
 """Async HTTP client for the GoldenGate Microservices REST API."""
 
 import logging
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Union
 from urllib.parse import urljoin
 
 import httpx
@@ -43,12 +43,15 @@ class GoldenGateClient:
         username: str,
         password: str,
         verify_ssl: bool = True,
+        ca_bundle: Optional[str] = None,
         timeout: int = 30,
         cache_ttl: int = 30,
         max_concurrent: int = 10,
-        requests_per_second: int = 20
+        requests_per_second: int = 20,
+        deployment_name: str = ""
     ):
         self.base_url = base_url.rstrip('/')
+        self.deployment_name = deployment_name
         self.username = username
         self.password = password
         self.verify_ssl = verify_ssl
@@ -60,9 +63,16 @@ class GoldenGateClient:
             requests_per_second=requests_per_second
         )
 
+        # verify= accepts: True (system CAs), False (skip), or a path string (custom CA bundle)
+        if ca_bundle:
+            ssl_verify: Union[bool, str] = ca_bundle
+            logger.info(f"Using custom CA bundle for {base_url}: {ca_bundle}")
+        else:
+            ssl_verify = verify_ssl
+
         self.client = httpx.AsyncClient(
             auth=(username, password),
-            verify=verify_ssl,
+            verify=ssl_verify,
             timeout=timeout,
             follow_redirects=True,
             headers={
@@ -71,7 +81,7 @@ class GoldenGateClient:
             }
         )
 
-        if not verify_ssl:
+        if not verify_ssl and not ca_bundle:
             logger.warning(f"SSL verification disabled for {base_url}")
 
     async def __aenter__(self):
@@ -434,6 +444,8 @@ class GoldenGateClient:
 
     async def list_trails(self) -> Dict[str, Any]:
         """List all trail files."""
+        if self.deployment_name:
+            return await self._request("GET", f"/services/{self.deployment_name}/adminsrvr/v2/trails")
         return await self._request("GET", "/services/v2/trails")
 
     async def get_trail_info(self, trail_name: str) -> Dict[str, Any]:
@@ -447,6 +459,8 @@ class GoldenGateClient:
             Trail information including size, sequence numbers
         """
         trail_name = self._sanitize_name(trail_name)
+        if self.deployment_name:
+            return await self._request("GET", f"/services/{self.deployment_name}/adminsrvr/v2/trails/{trail_name}")
         return await self._request("GET", f"/services/v2/trails/{trail_name}")
 
     async def purge_trail(self, trail_name: str, keep_files: int = 2) -> Dict[str, Any]:
@@ -463,6 +477,12 @@ class GoldenGateClient:
         trail_name = self._sanitize_name(trail_name)
         logger.info(f"Purging trail {trail_name}, keeping {keep_files} files")
 
+        if self.deployment_name:
+            return await self._request(
+                "POST",
+                f"/services/{self.deployment_name}/adminsrvr/v2/trails/{trail_name}/commands/purge",
+                data={"keepFiles": keep_files}
+            )
         return await self._request(
             "POST",
             f"/services/v2/trails/{trail_name}/commands/purge",

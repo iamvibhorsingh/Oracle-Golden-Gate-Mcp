@@ -6,9 +6,9 @@ Supports environment variables, config files, and secure credential management.
 
 import json
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -21,6 +21,7 @@ class DeploymentConfig:
     username: str
     password: str
     verify_ssl: bool = True
+    ca_bundle: Optional[str] = None  # Path to CA certificate bundle (.pem/.crt)
 
 
 class Config(BaseModel):
@@ -153,6 +154,7 @@ class Config(BaseModel):
                 username = os.getenv(f"GG_DEPLOYMENT_{i}_USERNAME")
                 password = os.getenv(f"GG_DEPLOYMENT_{i}_PASSWORD")
                 verify_ssl = os.getenv(f"GG_DEPLOYMENT_{i}_VERIFY_SSL", "true").lower() == "true"
+                ca_bundle = os.getenv(f"GG_DEPLOYMENT_{i}_CA_BUNDLE")
 
                 if not all([base_url, username, password]):
                     raise ValueError(f"Incomplete configuration for deployment {i}")
@@ -162,7 +164,8 @@ class Config(BaseModel):
                     base_url=base_url,
                     username=username,
                     password=password,
-                    verify_ssl=verify_ssl
+                    verify_ssl=verify_ssl,
+                    ca_bundle=ca_bundle,
                 ))
 
                 i += 1

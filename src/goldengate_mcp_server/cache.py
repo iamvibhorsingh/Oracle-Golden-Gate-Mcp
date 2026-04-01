@@ -17,7 +17,8 @@ class SimpleCache:
     Without cache: 3 API calls to GoldenGate
     With cache: 1 API call, 2 cache hits
 
-    This protects your GoldenGate infrastructure, not your wallet.
+    This protects your GoldenGate infrastructure, not your wallet since 
+    API calls are free :)
     """
 
     def __init__(self, ttl_seconds: int = 30):

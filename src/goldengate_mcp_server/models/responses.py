@@ -114,7 +114,7 @@ def build_process_lag_payload(
     status = _normalize_status(lag_api_data.get("status"))
     lag_seconds = parse_lag_duration(lag_api_data.get("lag"))
 
-    baseline = metrics_store.calculate_baseline(deployment, process_name, days=7)
+    baseline = metrics_store.calculate_baseline(deployment, process_name, days=7) if metrics_store is not None else {}
     baseline_mean: Optional[float] = None
     baseline_p95: Optional[float] = None
     baseline_std: Optional[float] = None

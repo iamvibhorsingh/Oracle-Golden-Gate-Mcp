@@ -107,10 +107,12 @@ class GoldenGateMCPServer(
                     username=deployment.username,
                     password=deployment.password,
                     verify_ssl=deployment.verify_ssl,
+                    ca_bundle=deployment.ca_bundle,
                     timeout=self.config.request_timeout,
                     cache_ttl=self.config.cache_ttl_seconds,
                     max_concurrent=self.config.max_concurrent_requests,
                     requests_per_second=self.config.requests_per_second,
+                    deployment_name=deployment.name,
                 )
                 self.clients[deployment.name] = client
                 logger.info("Initialized client for deployment: %s", deployment.name)

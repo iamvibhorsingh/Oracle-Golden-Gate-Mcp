@@ -76,6 +76,19 @@ backups/
 *.old
 *.backup
 
+# Certificates and keys
+*.pem
+*.crt
+*.cer
+*.der
+*.key
+*.p12
+*.pfx
+*.jks
+cacerts
+*-bundle.pem
+*-ca.pem
+
 # OS
 Thumbs.db
 

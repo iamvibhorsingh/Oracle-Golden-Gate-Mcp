@@ -96,6 +96,9 @@ GG_DEPLOYMENT_1_URL=https://gg21-server:9000
 GG_DEPLOYMENT_1_USERNAME=oggadmin
 GG_DEPLOYMENT_1_PASSWORD=your-secure-password
 GG_DEPLOYMENT_1_VERIFY_SSL=true
+# Optional: path to a PEM CA bundle if GG uses an internal/corporate CA
+# Combine root + issuing CAs into one file: cat RootCA.pem IssuingCA.pem > bundle.pem
+# GG_DEPLOYMENT_1_CA_BUNDLE=/path/to/ca-bundle.pem
 
 # Deployment 2 (GoldenGate 23)
 GG_DEPLOYMENT_2_NAME=gg23_test
@@ -128,10 +131,11 @@ Add to your MCP client configuration (e.g., `claude_desktop_config.json`):
       "env": {
         "GG_READ_ONLY": "true",
         "GG_DEPLOYMENT_1_NAME": "gg21_prod",
-        "GG_DEPLOYMENT_1_URL": "https://gg21-server:9000",
+        "GG_DEPLOYMENT_1_URL": "https://gg21-server",
         "GG_DEPLOYMENT_1_USERNAME": "oggadmin",
         "GG_DEPLOYMENT_1_PASSWORD": "your-password",
         "GG_DEPLOYMENT_1_VERIFY_SSL": "true"
+        // Optional: "GG_DEPLOYMENT_1_CA_BUNDLE": "/path/to/ca-bundle.pem"
       }
     }
   }
