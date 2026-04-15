@@ -97,7 +97,9 @@ Thumbs.db
 *.ext
 *.rep
 *.tmp
-*.ruff_cache/
+
+# Tooling caches
+.ruff_cache/
 ggserr.log
 extract_schema.json
 

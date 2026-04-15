@@ -103,7 +103,7 @@ Supporting context:
 
 ## `list_trails`, `get_trail_info`
 
-- API JSON for trails.
+- API JSON for trails. `get_trail_info` accepts an optional `trail_path` parameter (e.g. `"XYZ"`, `"ABCD"`) passed as `?path=` to the GoldenGate API — required when multiple trails share the same name prefix on a deployment.
 
 ## `backup_deployment_config`
 

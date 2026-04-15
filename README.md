@@ -91,8 +91,11 @@ GG_MAX_CONCURRENT_REQUESTS=20              # Max parallel requests
 GG_REQUESTS_PER_SECOND=50                  # Rate limit
 
 # Deployment 1 (GoldenGate 21)
-GG_DEPLOYMENT_1_NAME=gg21_prod
-GG_DEPLOYMENT_1_URL=https://gg21-server:9000
+# Use NAME for a single deployment, or NAMES for multiple deployments sharing
+# the same Service Manager URL and credentials (comma-separated):
+# GG_DEPLOYMENT_1_NAME=gg21_prod
+GG_DEPLOYMENT_1_NAMES=gg21_prod,gg21_test   # shorthand when URL/creds are shared
+GG_DEPLOYMENT_1_URL=https://gg21-server
 GG_DEPLOYMENT_1_USERNAME=oggadmin
 GG_DEPLOYMENT_1_PASSWORD=your-secure-password
 GG_DEPLOYMENT_1_VERIFY_SSL=true
