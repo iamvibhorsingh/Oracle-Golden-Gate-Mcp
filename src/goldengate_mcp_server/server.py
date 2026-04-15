@@ -41,7 +41,7 @@ from .services import (
     ServerCoreMixin,
     WriteMixin,
 )
-from .tools import all_tools, build_dispatch, METRICS_DEPENDENT_TOOLS
+from .tools import all_tools, build_dispatch
 
 logging.basicConfig(
     level=logging.INFO,

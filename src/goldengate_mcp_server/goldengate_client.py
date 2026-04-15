@@ -686,14 +686,14 @@ class GoldenGateClient:
         # Get full extract details which includes configuration
         extract_details = await self._request(
             "GET",
-            f"/services/v2/extracts/{extract_name}"
+            f"/services/{self.deployment_name}/adminsrvr/v2/extracts/{extract_name}"
         )
 
         # Try to get parameter file content
         try:
             param_file = await self._request(
                 "GET",
-                f"/services/v2/extracts/{extract_name}/parameterfile"
+                f"/services/{self.deployment_name}/adminsrvr/v2/extracts/{extract_name}/parameterfile"
             )
             extract_details["parameter_file"] = param_file
         except Exception as e:
@@ -717,14 +717,14 @@ class GoldenGateClient:
         # Get full replicat details
         replicat_details = await self._request(
             "GET",
-            f"/services/v2/replicats/{replicat_name}"
+            f"/services/{self.deployment_name}/adminsrvr/v2/replicats/{replicat_name}"
         )
 
         # Try to get parameter file content
         try:
             param_file = await self._request(
                 "GET",
-                f"/services/v2/replicats/{replicat_name}/parameterfile"
+                f"/services/{self.deployment_name}/adminsrvr/v2/replicats/{replicat_name}/parameterfile"
             )
             replicat_details["parameter_file"] = param_file
         except Exception as e:
