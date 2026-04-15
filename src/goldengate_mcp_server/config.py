@@ -104,7 +104,8 @@ class Config(BaseModel):
         - GG_DEPLOYMENTS: JSON string with deployment configurations
 
         Or individual deployment configs:
-        - GG_DEPLOYMENT_<N>_NAME: Deployment name
+        - GG_DEPLOYMENT_<N>_NAME: Single deployment name
+        - GG_DEPLOYMENT_<N>_NAMES: Comma-separated names sharing the same URL/credentials
         - GG_DEPLOYMENT_<N>_URL: Base URL
         - GG_DEPLOYMENT_<N>_USERNAME: Username
         - GG_DEPLOYMENT_<N>_PASSWORD: Password
@@ -132,13 +133,17 @@ class Config(BaseModel):
             try:
                 deployments_data = json.loads(deployments_json)
                 for dep in deployments_data:
-                    deployments.append(DeploymentConfig(
-                        name=dep["name"],
-                        base_url=dep["base_url"],
-                        username=dep["username"],
-                        password=dep["password"],
-                        verify_ssl=dep.get("verify_ssl", True)
-                    ))
+                    # Support "names" array for multiple deployments sharing URL/credentials
+                    names = dep.get("names") or [dep["name"]]
+                    for dep_name in names:
+                        deployments.append(DeploymentConfig(
+                            name=dep_name.strip(),
+                            base_url=dep["base_url"],
+                            username=dep["username"],
+                            password=dep["password"],
+                            verify_ssl=dep.get("verify_ssl", True),
+                            ca_bundle=dep.get("ca_bundle"),
+                        ))
             except json.JSONDecodeError as e:
                 raise ValueError(f"Invalid GG_DEPLOYMENTS JSON: {e}") from e
 
@@ -146,8 +151,9 @@ class Config(BaseModel):
         else:
             i = 1
             while True:
-                name = os.getenv(f"GG_DEPLOYMENT_{i}_NAME")
-                if not name:
+                # Support NAMES (comma-separated) or NAME (single) for sharing URL/credentials
+                names_raw = os.getenv(f"GG_DEPLOYMENT_{i}_NAMES") or os.getenv(f"GG_DEPLOYMENT_{i}_NAME")
+                if not names_raw:
                     break
 
                 base_url = os.getenv(f"GG_DEPLOYMENT_{i}_URL")
@@ -159,14 +165,15 @@ class Config(BaseModel):
                 if not all([base_url, username, password]):
                     raise ValueError(f"Incomplete configuration for deployment {i}")
 
-                deployments.append(DeploymentConfig(
-                    name=name,
-                    base_url=base_url,
-                    username=username,
-                    password=password,
-                    verify_ssl=verify_ssl,
-                    ca_bundle=ca_bundle,
-                ))
+                for dep_name in [n.strip() for n in names_raw.split(",") if n.strip()]:
+                    deployments.append(DeploymentConfig(
+                        name=dep_name,
+                        base_url=base_url,
+                        username=username,
+                        password=password,
+                        verify_ssl=verify_ssl,
+                        ca_bundle=ca_bundle,
+                    ))
 
                 i += 1
 

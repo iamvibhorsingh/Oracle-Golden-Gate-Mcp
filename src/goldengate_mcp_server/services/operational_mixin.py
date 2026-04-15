@@ -16,9 +16,9 @@ class OperationalMixin:
         client = self._get_client(deployment)
         return await client.list_trails()
 
-    async def _get_trail_info(self, deployment: str, trail_name: str) -> Dict[str, Any]:
+    async def _get_trail_info(self, deployment: str, trail_name: str, trail_path: str = None) -> Dict[str, Any]:
         client = self._get_client(deployment)
-        return await client.get_trail_info(trail_name)
+        return await client.get_trail_info(trail_name, trail_path=trail_path)
 
     async def _batch_start_processes(
         self,

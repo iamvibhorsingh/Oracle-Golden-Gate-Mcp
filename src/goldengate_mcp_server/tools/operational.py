@@ -25,7 +25,8 @@ OPERATIONAL_TOOLS: List[Tool] = [
             "type": "object",
             "properties": {
                 "deployment": {"type": "string", "description": "Name of the deployment"},
-                "trail_name": {"type": "string", "description": "Name of the trail"},
+                "trail_name": {"type": "string", "description": "Trail prefix name (e.g. 'lt', 'rt', 'il')"},
+                "trail_path": {"type": "string", "description": "Optional path qualifier (e.g. 'POS', 'ISCS') passed as ?path= to the API"},
             },
             "required": ["deployment", "trail_name"],
         },
@@ -54,7 +55,7 @@ def register_operational_handlers(dispatch: Dict[str, ToolHandler], app: Any) ->
         return await app._list_trails(arguments["deployment"])
 
     async def get_trail_info(arguments: Any):
-        return await app._get_trail_info(arguments["deployment"], arguments["trail_name"])
+        return await app._get_trail_info(arguments["deployment"], arguments["trail_name"], arguments.get("trail_path"))
 
     async def get_all_process_health(arguments: Any):
         return await app._get_all_process_health(arguments["deployment"])
