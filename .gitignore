@@ -110,3 +110,7 @@ tests/scratch_*.py
 # Performance/Profile
 .prof
 .bin
+
+# MCP Bundle
+*.mcpb
+mcpb_bundle
