@@ -152,7 +152,10 @@ class Config(BaseModel):
             i = 1
             while True:
                 # Support NAMES (comma-separated) or NAME (single) for sharing URL/credentials
-                names_raw = os.getenv(f"GG_DEPLOYMENT_{i}_NAMES") or os.getenv(f"GG_DEPLOYMENT_{i}_NAME")
+                names_raw = (
+                    os.getenv(f"GG_DEPLOYMENT_{i}_NAMES")
+                    or os.getenv(f"GG_DEPLOYMENT_{i}_NAME")
+                )
                 if not names_raw:
                     break
 
