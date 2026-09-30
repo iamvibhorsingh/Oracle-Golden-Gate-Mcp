@@ -22,6 +22,13 @@ class DeploymentConfig:
     password: str
     verify_ssl: bool = True
     ca_bundle: Optional[str] = None  # Path to CA certificate bundle (.pem/.crt)
+    # Real GoldenGate deployment name used in /services/{deployment}/adminsrvr/... URLs.
+    # Defaults to `name`; set it when `name` is only a friendly alias.
+    gg_deployment: Optional[str] = None
+
+    @property
+    def service_name(self) -> str:
+        return self.gg_deployment or self.name
 
 
 class Config(BaseModel):
@@ -43,6 +50,18 @@ class Config(BaseModel):
     audit_log_path: str = Field(
         default="./logs/audit.log",
         description="Path to audit log file"
+    )
+
+    audit_log_max_bytes: int = Field(
+        default=10 * 1024 * 1024,
+        description="Rotate the audit log when it reaches this size (0 disables rotation)",
+        ge=0,
+    )
+
+    audit_log_backup_count: int = Field(
+        default=5,
+        description="Number of rotated audit log files to keep",
+        ge=0,
     )
 
     metrics_db_path: str = Field(
@@ -101,6 +120,8 @@ class Config(BaseModel):
         - GG_READ_ONLY: Set to 'false' to enable write operations (default: true)
         - GG_REQUEST_TIMEOUT: Request timeout in seconds (default: 30)
         - GG_AUDIT_LOG_PATH: Path to audit log (default: ./logs/audit.log)
+        - GG_AUDIT_LOG_MAX_BYTES: Rotate audit log at this size (default: 10 MB, 0 = never)
+        - GG_AUDIT_LOG_BACKUP_COUNT: Rotated audit files to keep (default: 5)
         - GG_DEPLOYMENTS: JSON string with deployment configurations
 
         Or individual deployment configs:
@@ -110,6 +131,8 @@ class Config(BaseModel):
         - GG_DEPLOYMENT_<N>_USERNAME: Username
         - GG_DEPLOYMENT_<N>_PASSWORD: Password
         - GG_DEPLOYMENT_<N>_VERIFY_SSL: Verify SSL (default: true)
+        - GG_DEPLOYMENT_<N>_GG_DEPLOYMENT: Real GoldenGate deployment name when NAME is
+          an alias (only valid with a single NAME)
 
         Returns:
             Config instance
@@ -119,6 +142,8 @@ class Config(BaseModel):
         enable_metrics = os.getenv("GG_ENABLE_METRICS", "false").lower() == "true"
         request_timeout = int(os.getenv("GG_REQUEST_TIMEOUT", "30"))
         audit_log_path = os.getenv("GG_AUDIT_LOG_PATH", "./logs/audit.log")
+        audit_log_max_bytes = int(os.getenv("GG_AUDIT_LOG_MAX_BYTES", str(10 * 1024 * 1024)))
+        audit_log_backup_count = int(os.getenv("GG_AUDIT_LOG_BACKUP_COUNT", "5"))
         metrics_db_path = os.getenv("GG_METRICS_DB_PATH", "./data/metrics.db")
         cache_ttl_seconds = int(os.getenv("GG_CACHE_TTL_SECONDS", "30"))
         max_concurrent_requests = int(os.getenv("GG_MAX_CONCURRENT_REQUESTS", "10"))
@@ -135,6 +160,9 @@ class Config(BaseModel):
                 for dep in deployments_data:
                     # Support "names" array for multiple deployments sharing URL/credentials
                     names = dep.get("names") or [dep["name"]]
+                    gg_deployment = dep.get("gg_deployment")
+                    if gg_deployment and len(names) > 1:
+                        raise ValueError("gg_deployment cannot be combined with multiple names")
                     for dep_name in names:
                         deployments.append(DeploymentConfig(
                             name=dep_name.strip(),
@@ -143,6 +171,7 @@ class Config(BaseModel):
                             password=dep["password"],
                             verify_ssl=dep.get("verify_ssl", True),
                             ca_bundle=dep.get("ca_bundle"),
+                            gg_deployment=gg_deployment,
                         ))
             except json.JSONDecodeError as e:
                 raise ValueError(f"Invalid GG_DEPLOYMENTS JSON: {e}") from e
@@ -164,11 +193,18 @@ class Config(BaseModel):
                 password = os.getenv(f"GG_DEPLOYMENT_{i}_PASSWORD")
                 verify_ssl = os.getenv(f"GG_DEPLOYMENT_{i}_VERIFY_SSL", "true").lower() == "true"
                 ca_bundle = os.getenv(f"GG_DEPLOYMENT_{i}_CA_BUNDLE")
+                gg_deployment = os.getenv(f"GG_DEPLOYMENT_{i}_GG_DEPLOYMENT")
 
                 if not all([base_url, username, password]):
                     raise ValueError(f"Incomplete configuration for deployment {i}")
 
-                for dep_name in [n.strip() for n in names_raw.split(",") if n.strip()]:
+                dep_names = [n.strip() for n in names_raw.split(",") if n.strip()]
+                if gg_deployment and len(dep_names) > 1:
+                    raise ValueError(
+                        f"GG_DEPLOYMENT_{i}_GG_DEPLOYMENT cannot be combined with multiple NAMES"
+                    )
+
+                for dep_name in dep_names:
                     deployments.append(DeploymentConfig(
                         name=dep_name,
                         base_url=base_url,
@@ -176,6 +212,7 @@ class Config(BaseModel):
                         password=password,
                         verify_ssl=verify_ssl,
                         ca_bundle=ca_bundle,
+                        gg_deployment=gg_deployment,
                     ))
 
                 i += 1
@@ -185,6 +222,8 @@ class Config(BaseModel):
             enable_metrics=enable_metrics,
             request_timeout=request_timeout,
             audit_log_path=audit_log_path,
+            audit_log_max_bytes=audit_log_max_bytes,
+            audit_log_backup_count=audit_log_backup_count,
             metrics_db_path=metrics_db_path,
             cache_ttl_seconds=cache_ttl_seconds,
             max_concurrent_requests=max_concurrent_requests,
@@ -213,7 +252,9 @@ class Config(BaseModel):
                 base_url=dep["base_url"],
                 username=dep["username"],
                 password=dep["password"],
-                verify_ssl=dep.get("verify_ssl", True)
+                verify_ssl=dep.get("verify_ssl", True),
+                ca_bundle=dep.get("ca_bundle"),
+                gg_deployment=dep.get("gg_deployment"),
             ))
 
         return cls(
@@ -242,6 +283,10 @@ class Config(BaseModel):
                 "username": dep.username,
                 "verify_ssl": dep.verify_ssl,
             }
+            if dep.ca_bundle:
+                entry["ca_bundle"] = dep.ca_bundle
+            if dep.gg_deployment:
+                entry["gg_deployment"] = dep.gg_deployment
             if include_secrets:
                 entry["password"] = dep.password
             else:

@@ -29,7 +29,8 @@ class MetricsCollectionMixin:
                 if extract.get("status") == "running":
                     try:
                         lag_data = await client.get_extract_lag(extract_name)
-                        self.metrics_store.record_lag_metric(
+                        await asyncio.to_thread(
+                            self.metrics_store.record_lag_metric,
                             deployment_name,
                             extract_name,
                             "extract",
@@ -55,7 +56,8 @@ class MetricsCollectionMixin:
                 if replicat.get("status") == "running":
                     try:
                         lag_data = await client.get_replicat_lag(replicat_name)
-                        self.metrics_store.record_lag_metric(
+                        await asyncio.to_thread(
+                            self.metrics_store.record_lag_metric,
                             deployment_name,
                             replicat_name,
                             "replicat",
@@ -76,7 +78,9 @@ class MetricsCollectionMixin:
 
         try:
             health = await self._get_deployment_health(deployment_name)
-            self.metrics_store.record_health_snapshot(deployment_name, health)
+            await asyncio.to_thread(
+                self.metrics_store.record_health_snapshot, deployment_name, health
+            )
         except asyncio.CancelledError:
             raise
         except Exception as e:
@@ -102,7 +106,7 @@ class MetricsCollectionMixin:
 
         now_m = time.monotonic()
         if now_m - self._last_metrics_cleanup_monotonic >= 3600:
-            self.metrics_store.cleanup_old_data(retention_days=30)
+            await asyncio.to_thread(self.metrics_store.cleanup_old_data, retention_days=30)
             self._last_metrics_cleanup_monotonic = now_m
 
     def _start_metrics_collection(self) -> None:

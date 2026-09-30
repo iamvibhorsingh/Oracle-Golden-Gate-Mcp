@@ -1,7 +1,7 @@
 """DatabaseMonitor tests."""
 
 import sys
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -94,11 +94,10 @@ class TestDatabaseMonitor:
         db_monitor.oracle_available = True
 
         with patch.dict(sys.modules, {"oracledb": mock_ora}):
-            with patch("asyncio.to_thread", new=AsyncMock(return_value=mock_connection)):
-                result = await db_monitor.check_source_database_health("test_db")
+            result = await db_monitor.check_source_database_health("test_db")
 
         assert result["database_type"] == "oracle"
-        assert "metrics" in result
+        assert result["metrics"]["Host CPU Utilization (%)"] == 60.0
 
     @pytest.mark.asyncio
     async def test_check_target_database_health(self, db_monitor):

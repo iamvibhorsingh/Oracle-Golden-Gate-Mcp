@@ -1,6 +1,8 @@
 """Async HTTP client for the GoldenGate Microservices REST API."""
 
+import asyncio
 import logging
+import re
 from typing import Any, Dict, Optional, Union
 from urllib.parse import urljoin
 
@@ -84,6 +86,16 @@ class GoldenGateClient:
         if not verify_ssl and not ca_bundle:
             logger.warning(f"SSL verification disabled for {base_url}")
 
+    def _admin_path(self, suffix: str) -> str:
+        """Administration Server path for this deployment.
+
+        GoldenGate routes by deployment name (``/services/{deployment}/adminsrvr/v2/...``),
+        so ``deployment_name`` must be the real GoldenGate deployment name.
+        """
+        if not self.deployment_name:
+            raise ValueError("GoldenGateClient requires deployment_name for adminsrvr calls")
+        return f"/services/{self.deployment_name}/adminsrvr/v2/{suffix}"
+
     async def __aenter__(self):
         return self
 
@@ -128,6 +140,10 @@ class GoldenGateClient:
             raise GoldenGateAPIError(f"Unexpected error: {str(e)}") from e
         finally:
             self.rate_limiter.release()
+            if method != "GET":
+                # Any write can change process status/lag; drop cached reads so the
+                # next status call reflects it instead of serving a stale entry.
+                self.cache.clear()
 
     @retry(
         stop=stop_after_attempt(3),
@@ -182,10 +198,7 @@ class GoldenGateClient:
 
     async def list_extracts(self) -> Dict[str, Any]:
         """List all Extract processes."""
-        if self.deployment_name:
-            path = f"/services/{self.deployment_name}/adminsrvr/v2/extracts"
-            return await self._request("GET", path)
-        return await self._request("GET", "/services/v2/extracts")
+        return await self._request("GET", self._admin_path("extracts"))
 
     async def get_extract_status(self, extract_name: str) -> Dict[str, Any]:
         """
@@ -199,10 +212,7 @@ class GoldenGateClient:
         """
         # Sanitize input
         extract_name = self._sanitize_name(extract_name)
-        if self.deployment_name:
-            path = f"/services/{self.deployment_name}/adminsrvr/v2/extracts/{extract_name}"
-            return await self._request("GET", path)
-        return await self._request("GET", f"/services/v2/extracts/{extract_name}")
+        return await self._request("GET", self._admin_path(f"extracts/{extract_name}"))
 
     async def get_extract_lag(self, extract_name: str) -> Dict[str, Any]:
         """
@@ -245,10 +255,7 @@ class GoldenGateClient:
         extract_name = self._sanitize_name(extract_name)
         logger.info(f"Starting Extract: {extract_name}")
 
-        if self.deployment_name:
-            path = f"/services/{self.deployment_name}/adminsrvr/v2/extracts/{extract_name}"
-        else:
-            path = f"/services/adminsrvr/v2/extracts/{extract_name}"
+        path = self._admin_path(f"extracts/{extract_name}")
         return await self._request("PATCH", path, data={"status": "running"})
 
     async def stop_extract(self, extract_name: str) -> Dict[str, Any]:
@@ -264,20 +271,14 @@ class GoldenGateClient:
         extract_name = self._sanitize_name(extract_name)
         logger.info(f"Stopping Extract: {extract_name}")
 
-        if self.deployment_name:
-            path = f"/services/{self.deployment_name}/adminsrvr/v2/extracts/{extract_name}"
-        else:
-            path = f"/services/adminsrvr/v2/extracts/{extract_name}"
+        path = self._admin_path(f"extracts/{extract_name}")
         return await self._request("PATCH", path, data={"status": "stopped"})
 
     # ==================== Replicat Operations ====================
 
     async def list_replicats(self) -> Dict[str, Any]:
         """List all Replicat processes."""
-        if self.deployment_name:
-            path = f"/services/{self.deployment_name}/adminsrvr/v2/replicats"
-            return await self._request("GET", path)
-        return await self._request("GET", "/services/v2/replicats")
+        return await self._request("GET", self._admin_path("replicats"))
 
     async def get_replicat_status(self, replicat_name: str) -> Dict[str, Any]:
         """
@@ -290,10 +291,7 @@ class GoldenGateClient:
             Replicat status information
         """
         replicat_name = self._sanitize_name(replicat_name)
-        if self.deployment_name:
-            path = f"/services/{self.deployment_name}/adminsrvr/v2/replicats/{replicat_name}"
-            return await self._request("GET", path)
-        return await self._request("GET", f"/services/v2/replicats/{replicat_name}")
+        return await self._request("GET", self._admin_path(f"replicats/{replicat_name}"))
 
     async def get_replicat_lag(self, replicat_name: str) -> Dict[str, Any]:
         """
@@ -336,10 +334,7 @@ class GoldenGateClient:
         replicat_name = self._sanitize_name(replicat_name)
         logger.info(f"Starting Replicat: {replicat_name}")
 
-        if self.deployment_name:
-            path = f"/services/{self.deployment_name}/adminsrvr/v2/replicats/{replicat_name}"
-        else:
-            path = f"/services/adminsrvr/v2/replicats/{replicat_name}"
+        path = self._admin_path(f"replicats/{replicat_name}")
         return await self._request("PATCH", path, data={"status": "running"})
 
     async def stop_replicat(self, replicat_name: str) -> Dict[str, Any]:
@@ -355,10 +350,7 @@ class GoldenGateClient:
         replicat_name = self._sanitize_name(replicat_name)
         logger.info(f"Stopping Replicat: {replicat_name}")
 
-        if self.deployment_name:
-            path = f"/services/{self.deployment_name}/adminsrvr/v2/replicats/{replicat_name}"
-        else:
-            path = f"/services/adminsrvr/v2/replicats/{replicat_name}"
+        path = self._admin_path(f"replicats/{replicat_name}")
         return await self._request("PATCH", path, data={"status": "stopped"})
 
     # ==================== Statistics and Monitoring ====================
@@ -380,23 +372,10 @@ class GoldenGateClient:
         """
         process_name = self._sanitize_name(process_name)
 
-        dn = self.deployment_name
-        if process_type == "extract":
-            if dn:
-                stats_endpoint = f"/services/{dn}/adminsrvr/v2/extracts/{process_name}/statistics"
-                detail_endpoint = f"/services/{dn}/adminsrvr/v2/extracts/{process_name}"
-            else:
-                stats_endpoint = f"/services/v2/extracts/{process_name}/statistics"
-                detail_endpoint = f"/services/v2/extracts/{process_name}"
-        elif process_type == "replicat":
-            if dn:
-                stats_endpoint = f"/services/{dn}/adminsrvr/v2/replicats/{process_name}/statistics"
-                detail_endpoint = f"/services/{dn}/adminsrvr/v2/replicats/{process_name}"
-            else:
-                stats_endpoint = f"/services/v2/replicats/{process_name}/statistics"
-                detail_endpoint = f"/services/v2/replicats/{process_name}"
-        else:
+        if process_type not in ("extract", "replicat"):
             raise ValueError(f"Invalid process type: {process_type}")
+        detail_endpoint = self._admin_path(f"{process_type}s/{process_name}")
+        stats_endpoint = f"{detail_endpoint}/statistics"
 
         # Try the dedicated /statistics endpoint first (available in Enterprise editions).
         # Fall back to the process detail endpoint for GoldenGate Free, which returns
@@ -465,10 +444,7 @@ class GoldenGateClient:
 
     async def list_trails(self) -> Dict[str, Any]:
         """List all trail files."""
-        if self.deployment_name:
-            path = f"/services/{self.deployment_name}/adminsrvr/v2/trails"
-            return await self._request("GET", path)
-        return await self._request("GET", "/services/v2/trails")
+        return await self._request("GET", self._admin_path("trails"))
 
     async def get_trail_info(
         self, trail_name: str, trail_path: Optional[str] = None
@@ -485,10 +461,9 @@ class GoldenGateClient:
         """
         trail_name = self._sanitize_name(trail_name)
         params = {"path": trail_path} if trail_path else None
-        if self.deployment_name:
-            path = f"/services/{self.deployment_name}/adminsrvr/v2/trails/{trail_name}"
-            return await self._request("GET", path, params=params)
-        return await self._request("GET", f"/services/v2/trails/{trail_name}", params=params)
+        return await self._request(
+            "GET", self._admin_path(f"trails/{trail_name}"), params=params
+        )
 
     async def purge_trail(self, trail_name: str, keep_files: int = 2) -> Dict[str, Any]:
         """
@@ -504,15 +479,9 @@ class GoldenGateClient:
         trail_name = self._sanitize_name(trail_name)
         logger.info(f"Purging trail {trail_name}, keeping {keep_files} files")
 
-        if self.deployment_name:
-            return await self._request(
-                "POST",
-                f"/services/{self.deployment_name}/adminsrvr/v2/trails/{trail_name}/commands/purge",
-                data={"keepFiles": keep_files},
-            )
         return await self._request(
             "POST",
-            f"/services/v2/trails/{trail_name}/commands/purge",
+            self._admin_path(f"trails/{trail_name}/commands/purge"),
             data={"keepFiles": keep_files},
         )
 
@@ -533,18 +502,8 @@ class GoldenGateClient:
         Returns:
             Results for each process
         """
-        results = {}
-
-        for name in process_names:
-            try:
-                if process_type == "extract":
-                    result = await self.start_extract(name)
-                else:
-                    result = await self.start_replicat(name)
-                results[name] = {"success": True, "result": result}
-            except Exception as e:
-                results[name] = {"success": False, "error": str(e)}
-                logger.error(f"Failed to start {process_type} {name}: {e}")
+        action = self.start_extract if process_type == "extract" else self.start_replicat
+        results = await self._run_batch(action, process_names, f"start {process_type}")
 
         return {
             "total": len(process_names),
@@ -568,18 +527,8 @@ class GoldenGateClient:
         Returns:
             Results for each process
         """
-        results = {}
-
-        for name in process_names:
-            try:
-                if process_type == "extract":
-                    result = await self.stop_extract(name)
-                else:
-                    result = await self.stop_replicat(name)
-                results[name] = {"success": True, "result": result}
-            except Exception as e:
-                results[name] = {"success": False, "error": str(e)}
-                logger.error(f"Failed to stop {process_type} {name}: {e}")
+        action = self.stop_extract if process_type == "extract" else self.stop_replicat
+        results = await self._run_batch(action, process_names, f"stop {process_type}")
 
         return {
             "total": len(process_names),
@@ -587,6 +536,19 @@ class GoldenGateClient:
             "failed": sum(1 for r in results.values() if not r["success"]),
             "results": results
         }
+
+    async def _run_batch(self, action, process_names: list[str], label: str) -> Dict[str, Any]:
+        """Run ``action`` for every name concurrently (bounded by the rate limiter)."""
+
+        async def one(name: str) -> Dict[str, Any]:
+            try:
+                return {"success": True, "result": await action(name)}
+            except Exception as e:
+                logger.error("Failed to %s %s: %s", label, name, e)
+                return {"success": False, "error": str(e)}
+
+        outcomes = await asyncio.gather(*(one(n) for n in process_names))
+        return dict(zip(process_names, outcomes, strict=True))
 
     async def get_all_process_health(self) -> Dict[str, Any]:
         """
@@ -707,14 +669,14 @@ class GoldenGateClient:
         # Get full extract details which includes configuration
         extract_details = await self._request(
             "GET",
-            f"/services/{self.deployment_name}/adminsrvr/v2/extracts/{extract_name}"
+            self._admin_path(f"extracts/{extract_name}")
         )
 
         # Try to get parameter file content
         try:
             param_file = await self._request(
                 "GET",
-                f"/services/{self.deployment_name}/adminsrvr/v2/extracts/{extract_name}/parameterfile"
+                self._admin_path(f"extracts/{extract_name}/parameterfile")
             )
             extract_details["parameter_file"] = param_file
         except Exception as e:
@@ -738,14 +700,14 @@ class GoldenGateClient:
         # Get full replicat details
         replicat_details = await self._request(
             "GET",
-            f"/services/{self.deployment_name}/adminsrvr/v2/replicats/{replicat_name}"
+            self._admin_path(f"replicats/{replicat_name}")
         )
 
         # Try to get parameter file content
         try:
             param_file = await self._request(
                 "GET",
-                f"/services/{self.deployment_name}/adminsrvr/v2/replicats/{replicat_name}/parameterfile"
+                self._admin_path(f"replicats/{replicat_name}/parameterfile")
             )
             replicat_details["parameter_file"] = param_file
         except Exception as e:
@@ -930,7 +892,6 @@ class GoldenGateClient:
         """
         # Remove potentially dangerous characters
         # GoldenGate names are typically alphanumeric with underscores
-        import re
         if not re.match(r'^[a-zA-Z0-9_-]+$', name):
             raise ValueError(f"Invalid process name: {name}")
         return name

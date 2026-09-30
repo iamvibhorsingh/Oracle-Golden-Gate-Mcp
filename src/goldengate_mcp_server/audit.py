@@ -3,6 +3,7 @@
 import json
 import logging
 from datetime import datetime
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from threading import Lock
 from typing import Any, Dict, Optional
@@ -23,7 +24,12 @@ class AuditLogger:
     - Error details if applicable
     """
 
-    def __init__(self, log_path: str):
+    def __init__(
+        self,
+        log_path: str,
+        max_bytes: int = 10 * 1024 * 1024,
+        backup_count: int = 5,
+    ):
         self.log_path = Path(log_path)
         self.lock = Lock()
 
@@ -32,16 +38,20 @@ class AuditLogger:
         self.logger = logging.getLogger("audit")
         self.logger.setLevel(logging.INFO)
 
-        handler = logging.FileHandler(self.log_path)
-        handler.setLevel(logging.INFO)
-
-        formatter = logging.Formatter(
-            '%(asctime)s - %(message)s',
-            datefmt='%Y-%m-%d %H:%M:%S'
-        )
-        handler.setFormatter(formatter)
-
         if not self.logger.handlers:
+            # Size-based rotation: audit.log -> audit.log.1 ... audit.log.<backup_count>.
+            # max_bytes=0 disables rotation.
+            handler = RotatingFileHandler(
+                self.log_path,
+                maxBytes=max_bytes,
+                backupCount=backup_count,
+                encoding="utf-8",
+            )
+            handler.setLevel(logging.INFO)
+            handler.setFormatter(logging.Formatter(
+                '%(asctime)s - %(message)s',
+                datefmt='%Y-%m-%d %H:%M:%S'
+            ))
             self.logger.addHandler(handler)
 
     def log_action(

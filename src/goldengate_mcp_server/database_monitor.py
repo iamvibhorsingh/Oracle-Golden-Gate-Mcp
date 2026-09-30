@@ -49,6 +49,12 @@ class DatabaseMonitor:
                 "error": "oracledb library not installed"
             }
 
+        # oracledb (thin mode) is synchronous: run connect *and* every query in a
+        # worker thread so other tool calls keep running on the event loop.
+        return await asyncio.to_thread(self._check_oracle_health_sync, db_config)
+
+    @staticmethod
+    def _check_oracle_health_sync(db_config: Dict[str, Any]) -> Dict[str, Any]:
         import oracledb
 
         health = {
@@ -59,8 +65,7 @@ class DatabaseMonitor:
         }
 
         try:
-            connection = await asyncio.to_thread(
-                oracledb.connect,
+            connection = oracledb.connect(
                 user=db_config["username"],
                 password=db_config["password"],
                 dsn=db_config["dsn"]
@@ -209,6 +214,15 @@ class DatabaseMonitor:
         db_config: Dict[str, Any],
         gg_username: str
     ) -> Dict[str, Any]:
+        return await asyncio.to_thread(
+            self._get_oracle_session_info_sync, db_config, gg_username
+        )
+
+    @staticmethod
+    def _get_oracle_session_info_sync(
+        db_config: Dict[str, Any],
+        gg_username: str
+    ) -> Dict[str, Any]:
         import oracledb
 
         session_info = {
@@ -218,8 +232,7 @@ class DatabaseMonitor:
         }
 
         try:
-            connection = await asyncio.to_thread(
-                oracledb.connect,
+            connection = oracledb.connect(
                 user=db_config["username"],
                 password=db_config["password"],
                 dsn=db_config["dsn"]

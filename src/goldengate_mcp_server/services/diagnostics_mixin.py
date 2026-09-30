@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import statistics
 from datetime import datetime
 from typing import Any, Dict
@@ -33,13 +34,15 @@ class DiagnosticsMixin:
         deployment: str,
         process_name: str,
     ) -> Dict[str, Any]:
-        baseline = self.metrics_store.calculate_baseline(
+        baseline = await asyncio.to_thread(
+            self.metrics_store.calculate_baseline,
             deployment,
             process_name,
             days=7,
         )
 
-        hourly_pattern = self.metrics_store.get_hourly_pattern(
+        hourly_pattern = await asyncio.to_thread(
+            self.metrics_store.get_hourly_pattern,
             deployment,
             process_name,
             days=7,
@@ -58,7 +61,8 @@ class DiagnosticsMixin:
         deployment: str,
         process_name: str,
     ) -> Dict[str, Any]:
-        history = self.metrics_store.get_lag_history(
+        history = await asyncio.to_thread(
+            self.metrics_store.get_lag_history,
             deployment,
             process_name,
             hours=24,

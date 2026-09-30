@@ -1,5 +1,6 @@
 """Lag diagnostics using live API data plus MetricsStore history."""
 
+import asyncio
 import logging
 import statistics
 from datetime import datetime
@@ -85,7 +86,8 @@ class DiagnosticsEngine:
                 )
 
             # 2. Get historical baseline
-            baseline = self.metrics_store.calculate_baseline(
+            baseline = await asyncio.to_thread(
+                self.metrics_store.calculate_baseline,
                 deployment, process_name, days=7
             )
 
@@ -116,7 +118,8 @@ class DiagnosticsEngine:
             severity_bumps: List[str] = []
 
             # 3. Check for sudden spikes
-            recent_history = self.metrics_store.get_lag_history(
+            recent_history = await asyncio.to_thread(
+                self.metrics_store.get_lag_history,
                 deployment, process_name, hours=2
             )
 
@@ -133,7 +136,8 @@ class DiagnosticsEngine:
                         severity_bumps.append("high")
 
             # 4. Check hourly patterns
-            hourly_pattern = self.metrics_store.get_hourly_pattern(
+            hourly_pattern = await asyncio.to_thread(
+                self.metrics_store.get_hourly_pattern,
                 deployment, process_name, days=7
             )
 

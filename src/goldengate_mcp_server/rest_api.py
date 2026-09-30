@@ -2,20 +2,28 @@
 Optional FastAPI REST wrapper for the GoldenGate MCP Server.
 
 Delegates to the same async handlers as MCP (`GoldenGateMCPServer._tool_handlers`).
-Expose this only behind your own auth (API gateway, Azure Functions auth, etc.)—there
-is no authentication on these routes by default.
+
+Authentication: set GG_REST_API_TOKEN and send `Authorization: Bearer <token>` on every
+/api/tools* request. The server binds to 127.0.0.1 by default and refuses to bind to any
+other interface without a token unless --allow-unauthenticated is passed (e.g. when an
+API gateway in front already enforces auth).
 
 Install: pip install goldengate-mcp-server[azure]
-Run: goldengate-rest-server --host 0.0.0.0 --port 8000
+Run: GG_REST_API_TOKEN=... goldengate-rest-server --host 0.0.0.0 --port 8000
 """
 
+import hmac
+import ipaddress
 import logging
+import os
 import sys
 from datetime import datetime
+from typing import Annotated, Optional
 
 try:
     import uvicorn
-    from fastapi import FastAPI, HTTPException
+    from fastapi import Depends, FastAPI, HTTPException
+    from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
     from pydantic import BaseModel
 except ImportError:
     print("FastAPI dependencies not found. Install with: pip install goldengate-mcp-server[azure]")
@@ -48,6 +56,25 @@ async def shutdown_event():
     if mcp_server:
         await mcp_server.shutdown()
 
+_bearer = HTTPBearer(auto_error=False)
+
+
+def require_token(
+    credentials: Annotated[Optional[HTTPAuthorizationCredentials], Depends(_bearer)],
+) -> None:
+    """Enforce GG_REST_API_TOKEN when it is set (read per request so tests can set it)."""
+    expected = os.getenv("GG_REST_API_TOKEN")
+    if not expected:
+        return
+    supplied = credentials.credentials if credentials else ""
+    if not hmac.compare_digest(supplied.encode(), expected.encode()):
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid or missing bearer token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+
 class ToolRequest(BaseModel):
     name: str
     arguments: dict = {}
@@ -56,13 +83,15 @@ class ToolRequest(BaseModel):
 async def health_check():
     return {"status": "healthy"}
 
-@app.get("/api/tools")
+@app.get("/api/tools", dependencies=[Depends(require_token)])
 async def get_tools():
-    from .tools import all_tools
-    tools = all_tools()
-    return {"tools": [t.model_dump() for t in tools]}
+    if mcp_server is None:
+        raise HTTPException(status_code=503, detail="Server is still starting")
+    # Same filtering as MCP list_tools (metrics setting, read-only mode).
+    tools = mcp_server.list_tool_definitions()
+    return {"tools": [t.model_dump(exclude_none=True) for t in tools]}
 
-@app.post("/api/tools/execute")
+@app.post("/api/tools/execute", dependencies=[Depends(require_token)])
 async def execute_tool(request: ToolRequest):
     if mcp_server is None:
         raise HTTPException(status_code=503, detail="Server is still starting")
@@ -107,12 +136,41 @@ async def execute_tool(request: ToolRequest):
         raise HTTPException(status_code=500, detail=safe) from e
 
 
+def _is_loopback(host: str) -> bool:
+    if host == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
 def main():
     import argparse
     parser = argparse.ArgumentParser(description="Run the GoldenGate REST API Wrapper")
-    parser.add_argument("--host", default="0.0.0.0", help="Host interface to bind to")
+    parser.add_argument(
+        "--host",
+        default="127.0.0.1",
+        help="Host interface to bind to (default: 127.0.0.1; non-loopback needs a token)",
+    )
     parser.add_argument("--port", type=int, default=8000, help="Port to bind to")
+    parser.add_argument(
+        "--allow-unauthenticated",
+        action="store_true",
+        help="Allow binding to a non-loopback interface without GG_REST_API_TOKEN "
+        "(only when something in front of this server enforces auth)",
+    )
     args = parser.parse_args()
+
+    if (
+        not _is_loopback(args.host)
+        and not os.getenv("GG_REST_API_TOKEN")
+        and not args.allow_unauthenticated
+    ):
+        parser.error(
+            f"Refusing to listen on {args.host} without authentication. "
+            "Set GG_REST_API_TOKEN, bind to 127.0.0.1, or pass --allow-unauthenticated."
+        )
 
     uvicorn.run("goldengate_mcp_server.rest_api:app", host=args.host, port=args.port, reload=False)
 

@@ -78,6 +78,8 @@ python -m goldengate_mcp_server
 GG_READ_ONLY=true                          # Default: true (read-only mode)
 GG_REQUEST_TIMEOUT=30                      # HTTP timeout in seconds
 GG_AUDIT_LOG_PATH=./logs/audit.log         # Audit trail (credentials redacted)
+GG_AUDIT_LOG_MAX_BYTES=10485760            # Rotate audit log at 10 MB (0 = never rotate)
+GG_AUDIT_LOG_BACKUP_COUNT=5                # Rotated files kept (audit.log.1 ... .5)
 
 # Metrics (optional — disable for pure REST pass-through with no local storage)
 GG_ENABLE_METRICS=false                     # Default: false. Set true to enable SQLite,
@@ -92,7 +94,11 @@ GG_REQUESTS_PER_SECOND=50                  # Rate limit
 
 # Deployment 1 (GoldenGate 21)
 # Use NAME for a single deployment, or NAMES for multiple deployments sharing
-# the same Service Manager URL and credentials (comma-separated):
+# the same Service Manager URL and credentials (comma-separated).
+# Each name is used in the REST path (/services/<name>/adminsrvr/v2/...), so it must
+# be the real GoldenGate deployment name. To use a friendly alias instead, set
+# NAME=<alias> plus GG_DEPLOYMENT_<N>_GG_DEPLOYMENT=<real name> (single NAME only;
+# in GG_DEPLOYMENTS JSON use "gg_deployment").
 # GG_DEPLOYMENT_1_NAME=gg21_prod
 GG_DEPLOYMENT_1_NAMES=gg21_prod,gg21_test   # shorthand when URL/creds are shared
 GG_DEPLOYMENT_1_URL=https://gg21-server
@@ -202,6 +208,21 @@ To enable write operations (use with caution):
 
 ```bash
 GG_READ_ONLY=false  # Allows start/stop operations
+```
+
+In read-only mode the start/stop/batch tools are not listed at all (and are still rejected
+if called directly). Every tool carries MCP annotations: read tools have `readOnlyHint: true`;
+`stop_*` / `batch_stop_processes` have `destructiveHint: true`.
+
+### Optional REST wrapper
+
+`goldengate-rest-server` exposes the same tools over HTTP. It binds to `127.0.0.1` by default.
+Set `GG_REST_API_TOKEN` to require `Authorization: Bearer <token>` on `/api/tools*`; binding to
+any non-loopback host without a token is refused unless you pass `--allow-unauthenticated`
+(only do that behind a gateway that enforces auth).
+
+```bash
+GG_REST_API_TOKEN=$(openssl rand -hex 32) goldengate-rest-server --host 0.0.0.0 --port 8000
 ```
 
 ### 2. SSL/TLS Verification

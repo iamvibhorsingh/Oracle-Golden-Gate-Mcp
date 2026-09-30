@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Awaitable, Callable, Dict, List, Set
 
-from mcp.types import Tool
+from mcp.types import Tool, ToolAnnotations
 
 from .config_mgmt import CONFIG_TOOLS, register_config_handlers
 from .deployment import DEPLOYMENT_TOOLS, register_deployment_handlers
@@ -25,8 +25,33 @@ METRICS_DEPENDENT_TOOLS: Set[str] = {
 }
 
 
-def all_tools(*, enable_metrics: bool = True) -> List[Tool]:
-    """Every Tool definition exposed by list_tools (order: deployment → config)."""
+# Tools that change GoldenGate state; hidden from list_tools in read-only mode.
+WRITE_TOOL_NAMES: Set[str] = {t.name for t in WRITE_TOOLS}
+
+# Write tools that interrupt replication.
+DESTRUCTIVE_TOOLS: Set[str] = {"stop_extract", "stop_replicat", "batch_stop_processes"}
+
+
+def _annotate(tool: Tool) -> Tool:
+    if tool.name in WRITE_TOOL_NAMES:
+        annotations = ToolAnnotations(
+            readOnlyHint=False,
+            destructiveHint=tool.name in DESTRUCTIVE_TOOLS,
+            # Setting a process to running/stopped twice has the same effect as once.
+            idempotentHint=True,
+            openWorldHint=True,
+        )
+    else:
+        annotations = ToolAnnotations(readOnlyHint=True, openWorldHint=True)
+    return tool.model_copy(update={"annotations": annotations})
+
+
+def all_tools(*, enable_metrics: bool = True, read_only: bool = False) -> List[Tool]:
+    """Every Tool definition exposed by list_tools (order: deployment → config).
+
+    Metrics tools are omitted when metrics are off; write tools are omitted in read-only
+    mode (their handlers still reject calls, so hiding them is not the only guard).
+    """
     tools = [
         *DEPLOYMENT_TOOLS,
         *EXTRACT_TOOLS,
@@ -39,7 +64,9 @@ def all_tools(*, enable_metrics: bool = True) -> List[Tool]:
     ]
     if not enable_metrics:
         tools = [t for t in tools if t.name not in METRICS_DEPENDENT_TOOLS]
-    return tools
+    if read_only:
+        tools = [t for t in tools if t.name not in WRITE_TOOL_NAMES]
+    return [_annotate(t) for t in tools]
 
 
 def build_dispatch(app: Any, *, enable_metrics: bool = True) -> Dict[str, ToolHandler]:

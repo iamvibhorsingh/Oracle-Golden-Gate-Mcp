@@ -65,7 +65,11 @@ class GoldenGateMCPServer(
         self.config = config
         self.server = Server("goldengate-mcp-server")
         self.clients: Dict[str, GoldenGateClient] = {}
-        self.audit_logger = AuditLogger(config.audit_log_path)
+        self.audit_logger = AuditLogger(
+            config.audit_log_path,
+            max_bytes=config.audit_log_max_bytes,
+            backup_count=config.audit_log_backup_count,
+        )
 
         self._enable_metrics = config.enable_metrics
 
@@ -112,7 +116,7 @@ class GoldenGateMCPServer(
                     cache_ttl=self.config.cache_ttl_seconds,
                     max_concurrent=self.config.max_concurrent_requests,
                     requests_per_second=self.config.requests_per_second,
-                    deployment_name=deployment.name,
+                    deployment_name=deployment.service_name,
                 )
                 self.clients[deployment.name] = client
                 logger.info("Initialized client for deployment: %s", deployment.name)
@@ -123,12 +127,19 @@ class GoldenGateMCPServer(
                     e,
                 )
 
+    def list_tool_definitions(self) -> List[Tool]:
+        """Tools visible to clients under the current metrics / read-only settings."""
+        return all_tools(
+            enable_metrics=self._enable_metrics,
+            read_only=self.config.read_only,
+        )
+
     def _register_handlers(self) -> None:
         self._tool_handlers = build_dispatch(self, enable_metrics=self._enable_metrics)
 
         @self.server.list_tools()
         async def list_tools() -> List[Tool]:
-            return all_tools(enable_metrics=self._enable_metrics)
+            return self.list_tool_definitions()
 
         @self.server.call_tool()
         async def call_tool(name: str, arguments: Any) -> List[TextContent]:
