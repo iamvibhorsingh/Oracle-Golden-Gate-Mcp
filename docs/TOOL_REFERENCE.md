@@ -4,7 +4,7 @@ Tools return JSON serialized as text in the MCP `TextContent` payload (`indent=2
 
 Severity where used is always one of: `normal` | `elevated` | `high` | `critical` (see README threshold table and `classify_severity`).
 
-> **Metrics-dependent tools** — `diagnose_lag_issue`, `get_performance_baseline`, and `get_lag_trend` require `GG_ENABLE_METRICS=true` (the default). When `GG_ENABLE_METRICS=false` these tools are not registered and will not appear in `list_tools`. All other tools are available regardless of the metrics setting.
+> **Metrics-dependent tools** — `diagnose_lag_issue`, `get_performance_baseline`, and `get_lag_trend` require `GG_ENABLE_METRICS=true`, which is off by default. When `GG_ENABLE_METRICS=false` (the default) these tools are not registered and will not appear in `list_tools`. All other tools are available regardless of the metrics setting.
 
 ---
 

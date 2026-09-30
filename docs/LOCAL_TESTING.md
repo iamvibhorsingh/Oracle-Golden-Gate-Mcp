@@ -165,7 +165,7 @@ docker compose down -v
   ```
 - **SSL verification must be disabled** for local Docker (`GG_DEPLOYMENT_1_VERIFY_SSL=false`) — GG Free uses a self-signed certificate
 - The MCP's sigma-based severity classification requires ~7 days of baseline data to produce meaningful lag alerts; on a fresh deployment all severity levels will show as `normal`
-- **Metrics disabled mode**: Set `GG_ENABLE_METRICS=false` to skip SQLite entirely — useful if you only want live status/lag checks without storing history locally. The three baseline tools (`diagnose_lag_issue`, `get_performance_baseline`, `get_lag_trend`) will not appear when metrics are disabled.
+- **Metrics disabled mode (the default)**: Unless you set `GG_ENABLE_METRICS=true`, the server skips SQLite entirely — useful if you only want live status/lag checks without storing history locally. The three baseline tools (`diagnose_lag_issue`, `get_performance_baseline`, `get_lag_trend`) will not appear when metrics are disabled; the MCP client config above enables them.
 
 ## Troubleshooting
 

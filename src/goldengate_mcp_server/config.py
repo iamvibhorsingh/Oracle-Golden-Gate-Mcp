@@ -72,7 +72,7 @@ class Config(BaseModel):
     enable_metrics: bool = Field(
         default=False,
         description="Enable background metrics collection and SQLite storage. "
-        "Set to false for a lightweight, pure REST pass-through mode."
+        "Leave false (the default) for a lightweight, pure REST pass-through mode."
     )
 
     # Performance settings

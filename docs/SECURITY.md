@@ -31,14 +31,21 @@ GG_DEPLOYMENT_1_VERIFY_SSL=true  # Always in production
 - All operations logged (configurable via `GG_AUDIT_LOG_PATH`, default `./logs/audit.log`)
 - Includes timestamps, actions, results
 - Review regularly for security monitoring
+- **Hash-chained**: every entry carries `seq`, `prev_hash` and `hash` (SHA-256 of the entry, which includes the previous entry's hash). The chain continues across restarts and log rotation, so an edited, deleted, inserted or reordered entry is detectable:
+  ```bash
+  python -c "from goldengate_mcp_server.audit import verify_audit_log; print(verify_audit_log('./logs/audit.log'))"
+  ```
+  This checks the log and its rotated files (`audit.log.1` ...) and reports the first bad entry as `<file>:<line>: <reason>`. Entries written before hash chaining was added are accepted at the start of the log; an unchained entry after the chain starts is reported.
+- **Tamper-evident, not tamper-proof**: anyone who can rewrite the whole file can recompute the chain, and removing entries from either end leaves a valid, shorter chain. To catch that, periodically record the `head_hash` (and `last_seq`) from the verification somewhere the MCP host cannot write to (SIEM, another host), and compare it on later checks
+- Run one server process per audit log file; two writers on the same file would fork the chain
 
 ### 5. Metrics Storage (Optional)
 ```bash
-GG_ENABLE_METRICS=false  # Disables SQLite store and background collection
+GG_ENABLE_METRICS=false  # Default: no SQLite store, no background collection
 ```
-- When disabled: no local files written beyond the audit log, reduced attack surface
-- When enabled (default): SQLite DB at `GG_METRICS_DB_PATH` — restrict file permissions (`chmod 600`) if the host is shared
-- Disabling metrics removes three tools from the server (`diagnose_lag_issue`, `get_performance_baseline`, `get_lag_trend`) — acceptable trade-off for environments where local storage is a concern
+- When disabled (default): no local files written beyond the audit log, reduced attack surface
+- When enabled (`GG_ENABLE_METRICS=true`): SQLite DB at `GG_METRICS_DB_PATH` — restrict file permissions (`chmod 600`) if the host is shared
+- With metrics disabled, three tools are not registered (`diagnose_lag_issue`, `get_performance_baseline`, `get_lag_trend`) — acceptable trade-off for environments where local storage is a concern
 
 ### 6. Input Validation
 - Process names sanitized (alphanumeric + underscore only)

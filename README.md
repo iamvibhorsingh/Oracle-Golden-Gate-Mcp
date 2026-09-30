@@ -81,7 +81,7 @@ GG_AUDIT_LOG_PATH=./logs/audit.log         # Audit trail (credentials redacted)
 GG_AUDIT_LOG_MAX_BYTES=10485760            # Rotate audit log at 10 MB (0 = never rotate)
 GG_AUDIT_LOG_BACKUP_COUNT=5                # Rotated files kept (audit.log.1 ... .5)
 
-# Metrics (optional — disable for pure REST pass-through with no local storage)
+# Metrics (optional — off by default: pure REST pass-through with no local storage)
 GG_ENABLE_METRICS=false                     # Default: false. Set true to enable SQLite,
                                            # background collection, and baseline tools.
 GG_METRICS_DB_PATH=./data/metrics.db       # SQLite store for baselines (30-day retention,
@@ -275,6 +275,15 @@ Audit logs include:
 - Arguments (with sensitive data redacted)
 - Success/failure status
 - Error details
+- Hash chain (`seq`, `prev_hash`, `hash`) so edited, deleted or reordered entries are detectable
+
+Check the chain (covers rotated files too):
+
+```bash
+python -c "from goldengate_mcp_server.audit import verify_audit_log; print(verify_audit_log('./logs/audit.log'))"
+```
+
+The chain is tamper-evident, not tamper-proof; see [docs/SECURITY.md](docs/SECURITY.md) for how to pin the head hash externally.
 
 ### 6. Minimal Permissions
 
@@ -413,7 +422,7 @@ mypy src/
 - **Caching**: Responses cached for `GG_CACHE_TTL_SECONDS` (default 30s) to reduce GG API load
 - **Rate Limiting**: Configurable via `GG_REQUESTS_PER_SECOND` (default 50) and `GG_MAX_CONCURRENT_REQUESTS` (default 20)
 - **Async Operations**: Built on async/await — background metrics collection runs up to 50 deployments concurrently
-- **Metrics Store** *(optional)*: SQLite database (`GG_METRICS_DB_PATH`) maintains 30-day baselines for lag analysis. Disable with `GG_ENABLE_METRICS=false` for a zero-storage, pure REST mode.
+- **Metrics Store** *(optional, off by default)*: SQLite database (`GG_METRICS_DB_PATH`) maintains 30-day baselines for lag analysis. Enable with `GG_ENABLE_METRICS=true`; left at `false` the server runs in zero-storage, pure REST mode.
 - **Timeout Settings**: Adjust `GG_REQUEST_TIMEOUT` (default 30s) based on your network latency
 
 ## Limitations
@@ -422,8 +431,8 @@ mypy src/
 - **Trail endpoints**: `list_trails` and `get_trail_info` may not be available on GG Free edition (Enterprise only)
 - **Database correlation**: `check_database_correlation` requires optional oracledb monitoring config (`GG_ORACLEDB_*` env vars)
 - **Write operations**: `start_*`, `stop_*`, `batch_*` require `GG_READ_ONLY=false` and should be tested thoroughly before production use
-- **Metrics mode vs pass-through mode**: Set `GG_ENABLE_METRICS=false` to disable the SQLite store and background collection entirely — no disk usage, no baseline tools (`diagnose_lag_issue`, `get_performance_baseline`, `get_lag_trend`). Useful for large-scale deployments (1000s of instances) where you only need live REST monitoring. When metrics are enabled, the background collection loop runs up to **50 deployments concurrently** — practical ceiling is network/disk throughput, not deployment count.
-- **SQLite storage at scale**: With metrics enabled, steady-state DB size grows with deployment count (~50 GB at 5000 deployments with 30-day retention). Size appropriately or use `GG_ENABLE_METRICS=false` if local storage is a constraint.
+- **Metrics mode vs pass-through mode**: Pass-through is the default (`GG_ENABLE_METRICS=false`): no SQLite store or background collection — no disk usage, no baseline tools (`diagnose_lag_issue`, `get_performance_baseline`, `get_lag_trend`). Useful for large-scale deployments (1000s of instances) where you only need live REST monitoring. Set `GG_ENABLE_METRICS=true` for metrics mode, where the background collection loop runs up to **50 deployments concurrently** — practical ceiling is network/disk throughput, not deployment count.
+- **SQLite storage at scale**: With metrics enabled, steady-state DB size grows with deployment count (~50 GB at 5000 deployments with 30-day retention). Size appropriately or keep `GG_ENABLE_METRICS=false` (the default) if local storage is a constraint.
 
 ## Database Correlation (Optional)
 
@@ -488,7 +497,7 @@ MIT License
 ## Security Features
 
 - **Credential Redaction**: All sensitive data (passwords, tokens, secrets) automatically scrubbed from responses, audit logs, and error messages
-- **Audit Logging**: Complete trail of all operations with timestamps, arguments (redacted), and results
+- **Audit Logging**: Complete, hash-chained (tamper-evident) trail of all operations with timestamps, arguments (redacted), and results
 - **Read-Only Default**: Safe by default — requires explicit `GG_READ_ONLY=false` for write operations
 - **Input Validation**: Process names and parameters validated to prevent injection attacks
 - **SSL/TLS Support**: Configurable certificate verification with strong defaults for production
