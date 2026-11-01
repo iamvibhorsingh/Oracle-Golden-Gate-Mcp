@@ -23,7 +23,6 @@ import hmac
 import ipaddress
 import json
 import logging
-import os
 import sys
 from contextlib import asynccontextmanager
 from functools import lru_cache

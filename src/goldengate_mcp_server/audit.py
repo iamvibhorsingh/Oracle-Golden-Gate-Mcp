@@ -439,10 +439,14 @@ class AuditLogger:
                     if success is not None and entry.get("success") != success:
                         continue
 
-                    if user and entry.get("user") != user:
+                    # Security events keep the caller and deployment under details.
+                    details = entry.get("details")
+                    fields = {**details, **entry} if isinstance(details, dict) else entry
+
+                    if user and fields.get("user") != user:
                         continue
 
-                    if deployment and entry.get("deployment") != deployment:
+                    if deployment and fields.get("deployment") != deployment:
                         continue
 
                     matching_entries.append(entry)

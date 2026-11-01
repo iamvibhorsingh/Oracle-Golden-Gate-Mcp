@@ -42,21 +42,32 @@ Full rules are implemented in `goldengate_mcp_server.models.classify_severity`. 
 ## Key Features
 
 ### AI-Powered Intelligence
+- **Fleet view** - `get_fleet_health` ranks every abended, stopped or lagging process across all deployments
 - **Root cause analysis** - Diagnoses why lag is high, not just that it is
+- **Report analysis** - Reads process reports and extracts the `OGG-nnnnn` errors behind an abend
 - **Predictive baselines** - Knows what's normal for your environment
 - **Smart recommendations** - Actionable fixes, not generic advice
 
 ### Operational Efficiency
 - **Batch operations** - Start/stop multiple processes at once
-- **Trail management** - Monitor and manage trail files
+- **Safe restarts** - `restart_process` confirms a process stopped before starting it again
+- **Dry runs** - Preview any write against live status before applying it
+- **Config drift detection** - Save redacted snapshots and get a line diff against the live config
+- **Trail monitoring** - Inspect trail files and sizes
 - **Unified health checks** - All processes in one call
 - **Multi-deployment** - Manage on-prem and cloud from one place
 
 ### Enterprise Ready
 - **Read-only by default** - Safe for production
-- **Comprehensive audit logs** - Full compliance trail
-- **Secure credentials** - Environment-based configuration
+- **Roles and scoping** - Named REST callers with viewer/operator/admin roles, limited per deployment
+- **Change control** - Write allowlists, required change tickets on protected deployments, batch limits
+- **Tamper-evident audit** - Hash-chained log recording caller, change ticket and correlation ID, searchable from a tool
+- **Secrets from files** - Docker and Kubernetes secrets via `*_FILE` settings
+- **Observability** - Prometheus `/metrics`, readiness probe, JSON logs
+- **Container image** - Non-root `Dockerfile`
 - **GG 21.x & 23.x** - Works with your existing infrastructure
+
+See [Enterprise Deployment](#enterprise-deployment).
 
 ## Quick Start
 
@@ -89,8 +100,16 @@ GG_METRICS_DB_PATH=./data/metrics.db       # SQLite store for baselines (30-day 
 
 # Performance tuning
 GG_CACHE_TTL_SECONDS=30                    # Response cache TTL (reduces GG API load)
-GG_MAX_CONCURRENT_REQUESTS=20              # Max parallel requests
-GG_REQUESTS_PER_SECOND=50                  # Rate limit
+GG_MAX_CONCURRENT_REQUESTS=10              # Max parallel requests
+GG_REQUESTS_PER_SECOND=20                  # Rate limit
+
+# Governance (see Enterprise Deployment)
+GG_BACKUP_DIR=./backups                    # Config snapshots; compare only reads inside it
+# GG_WRITE_DEPLOYMENTS=gg23_test           # Deployments that accept writes (default: all)
+# GG_PROTECTED_DEPLOYMENTS=gg21_prod       # Deployments whose writes need a change_ticket
+# GG_DISABLED_TOOLS=batch_stop_processes   # Tools turned off for everyone
+# GG_MAX_BATCH_SIZE=25                     # Most processes per batch call
+# GG_LOG_FORMAT=json                       # text (default) or json
 
 # Deployment 1 (GoldenGate 21)
 # Use NAME for a single deployment, or NAMES for multiple deployments sharing
@@ -103,7 +122,7 @@ GG_REQUESTS_PER_SECOND=50                  # Rate limit
 GG_DEPLOYMENT_1_NAMES=gg21_prod,gg21_test   # shorthand when URL/creds are shared
 GG_DEPLOYMENT_1_URL=https://gg21-server
 GG_DEPLOYMENT_1_USERNAME=oggadmin
-GG_DEPLOYMENT_1_PASSWORD=your-secure-password
+GG_DEPLOYMENT_1_PASSWORD=your-secure-password   # or GG_DEPLOYMENT_1_PASSWORD_FILE=/run/secrets/gg
 GG_DEPLOYMENT_1_VERIFY_SSL=true
 # Optional: path to a PEM CA bundle if GG uses an internal/corporate CA
 # Combine root + issuing CAs into one file: cat RootCA.pem IssuingCA.pem > bundle.pem
@@ -116,6 +135,8 @@ GG_DEPLOYMENT_2_USERNAME=oggadmin
 GG_DEPLOYMENT_2_PASSWORD=your-secure-password
 GG_DEPLOYMENT_2_VERIFY_SSL=true
 ```
+
+Booleans accept `true/false`, `1/0`, `yes/no` and `on/off`. Anything else stops the server at startup, so a typo can't enable writes or disable TLS checks.
 
 ### Running the Server
 
@@ -153,7 +174,7 @@ Add to your MCP client configuration (e.g., `claude_desktop_config.json`):
 
 ## Available Tools
 
-**Full response-shape reference:** see [TOOL_REFERENCE.md](TOOL_REFERENCE.md) (JSON fields per tool).
+**Full response-shape reference:** see [TOOL_REFERENCE.md](docs/TOOL_REFERENCE.md) (JSON fields per tool).
 
 The MCP server provides the following tools for AI assistants:
 
@@ -173,13 +194,16 @@ The MCP server provides the following tools for AI assistants:
 - `get_performance_baseline` — 7-day statistics (mean, std dev, p95) + hourly pattern for capacity planning ⚠️ *requires metrics enabled*
 - `get_lag_trend` — 24-hour history with min/max/mean and direction indicator ⚠️ *requires metrics enabled*
 - `get_deployment_health` — all processes + health summary in one call
+- `get_fleet_health` — every deployment at once, with `attention[]` ranking abended, stopped and lagging processes worst first
 
 ### Trail & Configuration Management
 - `list_trails` — List all trail files in deployment
 - `get_trail_info` — Trail metadata (size, sequence, age)
-- `backup_deployment_config` — Snapshot all Extract/Replicat configs for comparison
+- `backup_deployment_config` — All Extract/Replicat configs, in the response only
+- `save_config_snapshot` — Save a redacted snapshot to `GG_BACKUP_DIR` (works in read-only mode; operator role)
+- `list_config_backups` — Saved snapshots for a deployment
 - `get_process_config` — Full config + parameter file content for a single process
-- `compare_deployment_configs` — Diff current vs backup (useful for drift detection)
+- `compare_deployment_configs` — Drift check against a saved snapshot, with a line diff per modified process
 
 ### Diagnostic Intelligence
 - `get_troubleshooting_guide` — Structured steps based on symptoms (high_lag, abended, stopped, etc.)
@@ -187,12 +211,23 @@ The MCP server provides the following tools for AI assistants:
 
 ### Error Management
 - `check_process_errors` — Check for process errors and recent messages
+- `get_process_report` — Tail of a process report plus parsed `OGG-nnnnn` errors and warnings
+- `get_process_checkpoints` — Read and write checkpoint positions
+- `get_deployment_messages` — Recent Administration Server messages
 
 ### Process Control (Requires Write Mode)
 - `start_extract` / `stop_extract` — Start/stop an Extract process
 - `start_replicat` / `stop_replicat` — Start/stop a Replicat process
 - `batch_start_processes` — Start multiple Extracts or Replicats in parallel
 - `batch_stop_processes` — Stop multiple Extracts or Replicats in parallel
+- `restart_process` — Stop, wait until stopped, start, wait until running
+
+Every write tool accepts `dry_run` (report what would change, change nothing) and `change_ticket` (required on protected deployments).
+
+### Governance (Admin Role)
+- `search_audit_log` — Who ran what, on which deployment, with what result (rotated files included)
+- `verify_audit_log` — Check the audit hash chain
+- `get_server_posture` — Effective security settings, with `findings[]` for anything weaker than a production baseline
 
 ## Security Best Practices
 
@@ -212,14 +247,16 @@ GG_READ_ONLY=false  # Allows start/stop operations
 
 In read-only mode the start/stop/batch tools are not listed at all (and are still rejected
 if called directly). Every tool carries MCP annotations: read tools have `readOnlyHint: true`;
-`stop_*` / `batch_stop_processes` have `destructiveHint: true`.
+`stop_*`, `restart_process` and `batch_stop_processes` have `destructiveHint: true`.
 
 ### Optional REST wrapper
 
-`goldengate-rest-server` exposes the same tools over HTTP. It binds to `127.0.0.1` by default.
-Set `GG_REST_API_TOKEN` to require `Authorization: Bearer <token>` on `/api/tools*`; binding to
-any non-loopback host without a token is refused unless you pass `--allow-unauthenticated`
-(only do that behind a gateway that enforces auth).
+`goldengate-rest-server` (install with `pip install -e ".[azure]"`) exposes the same tools over
+HTTP. It binds to `127.0.0.1` by default. Set `GG_REST_API_KEYS` for named callers (see
+[Enterprise Deployment](#enterprise-deployment)) or `GG_REST_API_TOKEN` for one shared admin token.
+Either requires `Authorization: Bearer <token>` on `/api/tools*` and `/metrics`. Binding to any
+non-loopback host without them is refused unless you pass `--allow-unauthenticated` (only do that
+behind a gateway that enforces auth).
 
 ```bash
 GG_REST_API_TOKEN=$(openssl rand -hex 32) goldengate-rest-server --host 0.0.0.0 --port 8000
@@ -272,16 +309,21 @@ grep "start_extract" ./logs/audit.log
 Audit logs include:
 - Timestamp
 - Action performed
-- Arguments (with sensitive data redacted)
+- Caller, channel (`mcp` or `rest`) and deployment
+- Arguments (with sensitive data redacted), including any `change_ticket`
+- Correlation ID linking an action to its result
 - Success/failure status
 - Error details
+- Policy denials, as `security` events
 - Hash chain (`seq`, `prev_hash`, `hash`) so edited, deleted or reordered entries are detectable
 
 Check the chain (covers rotated files too):
 
 ```bash
-python -c "from goldengate_mcp_server.audit import verify_audit_log; print(verify_audit_log('./logs/audit.log'))"
+goldengate-audit-verify ./logs/audit.log
 ```
+
+It exits non-zero on a broken chain, so it can run from cron. Add `--contains <hash>` to also fail if a previously pinned `head_hash` has disappeared.
 
 The chain is tamper-evident, not tamper-proof; see [docs/SECURITY.md](docs/SECURITY.md) for how to pin the head hash externally.
 
@@ -330,6 +372,70 @@ GRANT CONNECT TO gg_monitor;
             │   (21.x/23.x)   │
             └─────────────────┘
 ```
+
+## Enterprise Deployment
+
+Every tool call, over MCP or REST, takes one path: policy check, then dry run or execution, then audit and metrics.
+
+### Named callers and roles
+
+```bash
+# Hash a token for the key list; the plaintext goes to the caller only
+python -c "import hashlib,secrets; t=secrets.token_hex(32); print(t, hashlib.sha256(t.encode()).hexdigest())"
+
+GG_REST_API_KEYS='[
+  {"name": "grafana", "token_sha256": "<hex>", "role": "viewer"},
+  {"name": "oncall", "token_sha256": "<hex>", "role": "operator", "deployments": ["gg23_test"]}
+]'
+```
+
+| Role | Can use |
+|------|---------|
+| `viewer` | All read tools |
+| `operator` | Read tools, write tools, `save_config_snapshot` |
+| `admin` | Everything, including `search_audit_log`, `verify_audit_log`, `get_server_posture` |
+
+`deployments` limits a caller to those deployments, including in fleet-wide tools. Tools a caller can't use are left out of their tool list. Use `GG_REST_API_KEYS_FILE` to mount the list as a secret.
+
+stdio MCP clients run as admin, under the name in `GG_MCP_PRINCIPAL` or else the OS account; `GG_READ_ONLY` and the settings below still apply to them.
+
+### Change control
+
+```bash
+GG_READ_ONLY=false
+GG_WRITE_DEPLOYMENTS=gg21_prod,gg23_test     # Everything else stays read-only
+GG_PROTECTED_DEPLOYMENTS=gg21_prod           # Writes need a change_ticket
+GG_CHANGE_TICKET_PATTERN='CHG\d+'            # Default accepts OPS-123 and CHG0012345
+GG_MAX_BATCH_SIZE=25
+GG_DISABLED_TOOLS=batch_stop_processes
+```
+
+Deployment names here must exist, so a typo stops startup rather than leaving production unprotected. The server checks a ticket's format and records it in the audit log; it does not look the ticket up in your ticketing system.
+
+### Observability
+
+- `GET /metrics` (authenticated): Prometheus counters for tool calls, durations, policy denials and cache hits
+- `GET /api/health`: liveness
+- `GET /api/ready`: readiness (server started; use `get_fleet_health` for GoldenGate reachability)
+- `X-Correlation-ID` on REST responses matches `correlation_id` in the audit log
+- `GG_LOG_FORMAT=json` writes redacted JSON logs to stderr
+
+### Docker
+
+```bash
+docker build -t goldengate-mcp-server .
+docker run -p 8000:8000 \
+  -v ggmcp:/var/lib/ggmcp \
+  -v /path/to/secrets:/run/secrets:ro \
+  -e GG_DEPLOYMENT_1_NAME=prod \
+  -e GG_DEPLOYMENT_1_URL=https://gg-host:9000 \
+  -e GG_DEPLOYMENT_1_USERNAME=oggadmin \
+  -e GG_DEPLOYMENT_1_PASSWORD_FILE=/run/secrets/gg_password \
+  -e GG_REST_API_KEYS_FILE=/run/secrets/api_keys.json \
+  goldengate-mcp-server
+```
+
+The container runs as a non-root user and keeps its audit log, metrics and snapshots in `/var/lib/ggmcp`. Run one replica per audit log: two writers would fork the hash chain.
 
 ## Example Usage with AI Assistants
 
@@ -420,7 +526,7 @@ mypy src/
 ## Performance Features
 
 - **Caching**: Responses cached for `GG_CACHE_TTL_SECONDS` (default 30s) to reduce GG API load
-- **Rate Limiting**: Configurable via `GG_REQUESTS_PER_SECOND` (default 50) and `GG_MAX_CONCURRENT_REQUESTS` (default 20)
+- **Rate Limiting**: Configurable via `GG_REQUESTS_PER_SECOND` (default 20) and `GG_MAX_CONCURRENT_REQUESTS` (default 10)
 - **Async Operations**: Built on async/await — background metrics collection runs up to 50 deployments concurrently
 - **Metrics Store** *(optional, off by default)*: SQLite database (`GG_METRICS_DB_PATH`) maintains 30-day baselines for lag analysis. Enable with `GG_ENABLE_METRICS=true`; left at `false` the server runs in zero-storage, pure REST mode.
 - **Timeout Settings**: Adjust `GG_REQUEST_TIMEOUT` (default 30s) based on your network latency
@@ -430,7 +536,9 @@ mypy src/
 - **Requires Microservices Architecture**: GoldenGate must be deployed in Microservices mode (REST API available since GG 12.3+, recommended 21c+)
 - **Trail endpoints**: `list_trails` and `get_trail_info` may not be available on GG Free edition (Enterprise only)
 - **Database correlation**: `check_database_correlation` requires optional oracledb monitoring config (`GG_ORACLEDB_*` env vars)
-- **Write operations**: `start_*`, `stop_*`, `batch_*` require `GG_READ_ONLY=false` and should be tested thoroughly before production use
+- **Write operations**: `start_*`, `stop_*`, `restart_process`, `batch_*` require `GG_READ_ONLY=false` and should be tested thoroughly before production use
+- **Live coverage**: `get_process_report`, `get_process_checkpoints`, `get_deployment_messages` and the status fallback follow Oracle's REST documentation and are tested against a fake server; run `pytest -m requires_gg` and try them on your GoldenGate version before relying on them
+- **Single process**: Audit chain, counters and cache live in one process; run one replica per audit log
 - **Metrics mode vs pass-through mode**: Pass-through is the default (`GG_ENABLE_METRICS=false`): no SQLite store or background collection — no disk usage, no baseline tools (`diagnose_lag_issue`, `get_performance_baseline`, `get_lag_trend`). Useful for large-scale deployments (1000s of instances) where you only need live REST monitoring. Set `GG_ENABLE_METRICS=true` for metrics mode, where the background collection loop runs up to **50 deployments concurrently** — practical ceiling is network/disk throughput, not deployment count.
 - **SQLite storage at scale**: With metrics enabled, steady-state DB size grows with deployment count (~50 GB at 5000 deployments with 30-day retention). Size appropriately or keep `GG_ENABLE_METRICS=false` (the default) if local storage is a constraint.
 
@@ -475,7 +583,7 @@ The AI will call `check_database_correlation` with `database_name=prod_source` a
 |---|---|---|
 | List / status / lag (extracts & replicats) | ✅ | ✅ |
 | Start / stop processes | ✅ | ✅ |
-| Batch start / stop | ✅ | ✅ |
+| Batch start / stop, restart | ✅ | ✅ |
 | Deployment health & diagnostics | ✅ | ✅ |
 | Process statistics (throughput) | ✅ partial (falls back to detail endpoint) | ✅ full `/statistics` endpoint |
 | `list_trails` / `get_trail_info` | ❌ 404 | ✅ |
@@ -496,7 +604,8 @@ MIT License
 
 ## Security Features
 
-- **Credential Redaction**: All sensitive data (passwords, tokens, secrets) automatically scrubbed from responses, audit logs, and error messages
+- **Credential Redaction**: Sensitive keys, parameter-file credential lines (string or list form, comments included) and common secret patterns in error text are scrubbed from responses, audit logs and logs. It is pattern-based, so treat it as a safety net
+- **Access Control**: Roles, per-deployment scoping, write allowlists and change tickets
 - **Audit Logging**: Complete, hash-chained (tamper-evident) trail of all operations with timestamps, arguments (redacted), and results
 - **Read-Only Default**: Safe by default — requires explicit `GG_READ_ONLY=false` for write operations
 - **Input Validation**: Process names and parameters validated to prevent injection attacks

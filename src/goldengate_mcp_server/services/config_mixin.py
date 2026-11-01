@@ -54,7 +54,8 @@ class ConfigToolsMixin:
     async def _list_config_backups(self, deployment: str) -> Dict[str, Any]:
         self._get_client(deployment)
         root = self._backup_root()
-        files = sorted(root.glob(f"{self._snapshot_prefix(deployment)}*.json")) if root.is_dir() else []
+        pattern = f"{self._snapshot_prefix(deployment)}*.json"
+        files = sorted(root.glob(pattern)) if root.is_dir() else []
         return {
             "deployment": deployment,
             "backups": [

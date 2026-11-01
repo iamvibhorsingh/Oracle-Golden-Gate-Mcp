@@ -151,7 +151,7 @@ class GoldenGateMCPServer(
                 )
 
     def list_tool_definitions(self, principal: Optional[Principal] = None) -> List[Tool]:
-        """Tools visible to ``principal`` under the current metrics / read-only / policy settings."""
+        """Tools ``principal`` can use under the metrics, read-only and policy settings."""
         tools = all_tools(
             enable_metrics=self._enable_metrics,
             read_only=self.config.read_only,

@@ -1,9 +1,10 @@
 """Bootstrap local GG Free: credentials, EXT1, REP1 via REST API."""
 
 import os
-import time
-import httpx
 import subprocess
+import time
+
+import httpx
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -145,7 +146,10 @@ def step_extract():
         time.sleep(2)
         check = client.get(f"{GG_URL}/services/v2/extracts/EXT1")
         if check.status_code != 200:
-            print(f"   ✗ Extract EXT1 not found after creation (status {check.status_code}). Retrying...")
+            print(
+                f"   ✗ Extract EXT1 not found after creation (status {check.status_code}). "
+                "Retrying..."
+            )
             resp = client.post(f"{GG_URL}/services/v2/extracts/EXT1", json=payload)
             _ok(resp, "Extract EXT1 created (retry)")
             time.sleep(2)
@@ -177,7 +181,7 @@ register extract EXT1 database
 
         print("   Starting EXT1...")
         start_resp = client.patch(
-            f"{GG_URL}/services/v2/extracts/EXT1", 
+            f"{GG_URL}/services/v2/extracts/EXT1",
             json={"status": "running"}
         )
         _ok(start_resp, "EXT1 start command executed")
@@ -189,7 +193,7 @@ def step_replicat():
 
     # Delete if exists
     client.delete(f"{GG_URL}/services/v2/replicats/REP1")
-    
+
     payload = {
         "description": "Integration Test Replicat (GG_TGT)",
         "source": {
@@ -218,7 +222,7 @@ def step_replicat():
     if _ok(resp, "Replicat REP1 created"):
         print("   Starting REP1...")
         start_resp = client.patch(
-            f"{GG_URL}/services/v2/replicats/REP1", 
+            f"{GG_URL}/services/v2/replicats/REP1",
             json={"status": "running"}
         )
         _ok(start_resp, "REP1 start command executed")
@@ -233,7 +237,8 @@ def step_verify():
         if resp.status_code == 200:
             items = resp.json().get("response", {}).get("items", [])
             for item in items:
-                print(f"   {kind[:-1].capitalize()} {item.get('name', '?')} status: {item.get('status', 'unknown')}")
+                label = kind[:-1].capitalize()
+                print(f"   {label} {item.get('name', '?')} status: {item.get('status', 'unknown')}")
         else:
             print(f"   ✗ Could not list {kind}")
 

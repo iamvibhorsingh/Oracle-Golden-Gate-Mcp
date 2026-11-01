@@ -6,6 +6,60 @@ Severity where used is always one of: `normal` | `elevated` | `high` | `critical
 
 > **Metrics-dependent tools** — `diagnose_lag_issue`, `get_performance_baseline`, and `get_lag_trend` require `GG_ENABLE_METRICS=true`, which is off by default. When `GG_ENABLE_METRICS=false` (the default) these tools are not registered and will not appear in `list_tools`. All other tools are available regardless of the metrics setting.
 
+Policy denials return `{ error, code, reason, tool }`, where `code` is one of `tool_disabled`, `insufficient_role`, `deployment_forbidden`, `read_only`, `deployment_not_writable`, `batch_too_large`, `change_ticket_required`, `change_ticket_invalid`. Over REST these are HTTP 403.
+
+---
+
+## `get_fleet_health`
+
+Optional inputs: `deployments[]`, `lag_threshold_seconds` (default 300).
+
+- `summary`: `deployments`, `healthy`, `degraded`, `error`, `processes`, `running`, `needs_attention`
+- `attention[]`, worst first: `{ deployment, process, process_type, status, lag_seconds, severity, reason }`. Non-running states other than `stopped` are `critical`, lag at or over the threshold is `high`, `stopped` is `elevated`
+- `deployments[]`: `{ deployment, overall_status, processes, running, issues[] }`
+
+---
+
+## `get_process_report`
+
+Inputs: `deployment`, `process_type`, `process_name`, optional `tail_lines` (default 200, max 1000), `report` (e.g. `EXT10.rpt`).
+
+- `report`, `total_lines`, `lines[]` (redacted tail)
+- `ogg_messages[]`: last 20 `{ level, code, text }` found in the whole report
+
+---
+
+## `get_process_checkpoints` / `get_deployment_messages`
+
+`get_process_checkpoints`: GoldenGate checkpoint body (`current`, and `history` with the `history` input).
+
+`get_deployment_messages`: `{ deployment, total, messages[] }`, newest last; `limit` defaults to 50, max 500.
+
+---
+
+## Write tools
+
+All accept `dry_run` and `change_ticket`. Successful results include `correlation_id`.
+
+- `dry_run: true`: `{ dry_run, operation, deployment, process_type, targets[], change_ticket_required, note }`, where each target is `{ name, current_status, would_change }` or `{ name, error }`
+- `restart_process`: inputs `deployment`, `process_name`, `process_type`, optional `timeout_seconds` (default 120). Returns `{ success, previous_status, status }`, plus `error` if the process would not stop
+
+---
+
+## `save_config_snapshot` / `list_config_backups` / `compare_deployment_configs`
+
+- `save_config_snapshot`: `{ backup_file, deployment, extracts, replicats }`
+- `list_config_backups`: `{ deployment, backups[]: { backup_file, size_bytes } }`
+- `compare_deployment_configs` with `backup_file`: `identical`, `summary{ added_processes, removed_processes, modified_processes }`, `differences[]: { process, type, field, change, diff[] }` (unified diff lines), `compared_with`, timestamps
+
+---
+
+## Governance tools (admin role)
+
+- `search_audit_log`: filters `action`, `user`, `deployment`, `event_type`, `success`, `since_hours`, `limit` (default 100, max 1000). Returns `{ count, entries[] }`
+- `verify_audit_log`: `{ ok, entries, legacy_entries, first_seq, last_seq, head_hash, error }`
+- `get_server_posture`: `{ version, read_only, metrics_enabled, policy{}, deployments[], findings[] }`
+
 ---
 
 ## `get_extract_lag` / `get_replicat_lag`

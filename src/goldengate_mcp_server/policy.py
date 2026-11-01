@@ -1,8 +1,8 @@
 """Who may call which tool, on which deployment.
 
-Every tool call, MCP or REST, passes :meth:`Policy.check` before its handler runs. Checks
-fail closed: a tool this module knows nothing about needs only ``viewer`` because every tool
-that changes anything is listed in ``tools.registry`` and tested to be.
+Every tool call, MCP or REST, passes :meth:`Policy.check` before its handler runs. A tool
+needs only ``viewer`` unless ``tools.registry`` lists it, so a test asserts that every tool
+not annotated read-only is listed there.
 """
 
 from __future__ import annotations

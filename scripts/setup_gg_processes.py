@@ -91,7 +91,7 @@ def setup_extracts(container: str, deployment: str, user: str,
         "",
     ]
 
-    for i, tbl in enumerate(TABLES):
+    for i in range(len(TABLES)):
         name = f"EXT{i + 1:02d}"
         trail = f"{chr(97 + i)}a"  # aa, ba, ca, ... ja
 
@@ -147,7 +147,7 @@ def setup_replicats(container: str, deployment: str, user: str,
         "",
     ]
 
-    for i, tbl in enumerate(TABLES):
+    for i in range(len(TABLES)):
         name = f"REP{i + 1:02d}"
         trail = f"{chr(97 + i)}a"
 

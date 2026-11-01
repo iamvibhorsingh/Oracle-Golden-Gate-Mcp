@@ -1,10 +1,10 @@
 """End-to-end replication smoke test (requires setup_local_replication.py first)."""
 
-import time
 import os
+import time
 
-import oracledb
 import httpx
+import oracledb
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -35,7 +35,7 @@ def check_gg_status():
                     if status not in ("running",):
                         print(f"   ⚠ {name} is {status}. Attempting to start...")
                         patch_resp = client.patch(
-                            f"{GG_URL}/services/v2/{kind}/{name}", 
+                            f"{GG_URL}/services/v2/{kind}/{name}",
                             json={"status": "running"}
                         )
                         if patch_resp.status_code == 200:
@@ -94,7 +94,8 @@ def verify_replication(email, cust_id):
                 print("   ✗ Customer NOT found in target — replication may not be working")
 
             cur.execute(
-                "SELECT order_id, amount, status FROM orders WHERE customer_id = :1 AND status = 'TEST'",
+                "SELECT order_id, amount, status FROM orders "
+                "WHERE customer_id = :1 AND status = 'TEST'",
                 (cust_id,),
             )
             row = cur.fetchone()

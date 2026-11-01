@@ -60,7 +60,8 @@ class WriteMixin:
             or arguments.get("extract_name")
             or arguments.get("replicat_name")
         ]
-        read = client.get_extract_status if process_type == "extract" else client.get_replicat_status
+        is_extract = process_type == "extract"
+        read = client.get_extract_status if is_extract else client.get_replicat_status
         wanted = "stopped" if "stop" in operation else "running"
 
         async def target(name: str) -> Dict[str, Any]:
