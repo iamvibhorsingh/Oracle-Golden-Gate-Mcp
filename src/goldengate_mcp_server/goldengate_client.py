@@ -8,7 +8,7 @@ import logging
 import re
 import time
 from typing import Any, Dict, List, Optional, Union
-from urllib.parse import urljoin
+from urllib.parse import parse_qsl, urljoin, urlsplit
 
 import httpx
 from tenacity import (
@@ -20,9 +20,11 @@ from tenacity import (
 
 from .cache import RateLimiter, SimpleCache
 from .redaction import redact_error_text
-from .utils import collection_items, parse_lag_duration, unwrap_response
+from .utils import collection_items, normalize_status, parse_lag_duration, unwrap_response
 
 logger = logging.getLogger(__name__)
+
+MAX_COLLECTION_PAGES = 100
 
 
 class GoldenGateAPIError(Exception):
@@ -60,7 +62,7 @@ async def process_states(client: Any, process_type: str) -> List[Dict[str, Any]]
                 status = unwrap_response(await detail(name)).get("status")
             except Exception as e:
                 logger.warning("Could not get status of %s %s: %s", process_type, name, e)
-        return {"name": name, "status": status or "unknown"}
+        return {"name": name, "status": normalize_status(status) or "unknown"}
 
     return list(await asyncio.gather(*(state(i) for i in collection_items(await listing()))))
 
@@ -133,9 +135,12 @@ class GoldenGateClient:
         GoldenGate routes by deployment name (``/services/{deployment}/adminsrvr/v2/...``),
         so ``deployment_name`` must be the real GoldenGate deployment name.
         """
+        return self._service_path("adminsrvr", suffix)
+
+    def _service_path(self, service: str, suffix: str) -> str:
         if not self.deployment_name:
             raise ValueError("GoldenGateClient requires deployment_name for adminsrvr calls")
-        return f"/services/{self.deployment_name}/adminsrvr/v2/{suffix}"
+        return f"/services/{self.deployment_name}/{service}/v2/{suffix}"
 
     async def __aenter__(self):
         return self
@@ -149,7 +154,8 @@ class GoldenGateClient:
         endpoint: str,
         data: Optional[Dict[str, Any]] = None,
         params: Optional[Dict[str, Any]] = None,
-        use_cache: bool = True
+        use_cache: bool = True,
+        text: bool = False,
     ) -> Dict[str, Any]:
         if method == "GET" and use_cache:
             cache_key = f"{endpoint}:{params}"
@@ -163,7 +169,7 @@ class GoldenGateClient:
 
         try:
             result = await self._execute_with_retries(
-                method, url, data, params
+                method, url, data, params, text=text
             )
 
             if method == "GET" and use_cache:
@@ -198,6 +204,7 @@ class GoldenGateClient:
         url: str,
         data: Optional[Dict[str, Any]],
         params: Optional[Dict[str, Any]],
+        text: bool = False,
     ) -> Dict[str, Any]:
         logger.debug("%s %s", method, url)
 
@@ -223,7 +230,43 @@ class GoldenGateClient:
 
         if response.status_code == 204:
             return {"success": True, "message": "Operation completed successfully"}
+        if text:
+            return {"content": response.text}
         return response.json() if response.text else {}
+
+    async def _list_collection(self, path: str) -> Dict[str, Any]:
+        """
+        GET a collection, following ``next`` links so a long list isn't silently cut short.
+
+        Only the query of a next link is used: its host is whatever GoldenGate believes it
+        is, which needn't be reachable and must never receive these credentials.
+        """
+        first = await self._request("GET", path)
+        body = unwrap_response(first)
+        items = collection_items(first)
+        page, seen = first, set()
+
+        while True:
+            links = []
+            for part in (page, unwrap_response(page)):
+                links.extend(part.get("links", []) if isinstance(part, dict) else [])
+            next_link = next(
+                (i for i in links if isinstance(i, dict) and i.get("rel") == "next"), None
+            )
+            if next_link is None:
+                break
+
+            query = urlsplit(str(next_link.get("href", ""))).query
+            if not query or query in seen or len(seen) >= MAX_COLLECTION_PAGES:
+                raise GoldenGateAPIError(f"Could not read all pages of {path}")
+            seen.add(query)
+
+            page = await self._request("GET", path, params=dict(parse_qsl(query)))
+            items = items + collection_items(page)
+
+        if seen:
+            body["items"] = items
+        return first
 
     # ==================== Deployment Operations ====================
 
@@ -247,8 +290,9 @@ class GoldenGateClient:
         self, process_type: str, process_name: str, full_status: Dict[str, Any]
     ) -> Dict[str, Any]:
         """Process detail body, with ``lag`` from /info/status when the detail has none."""
-        status = unwrap_response(full_status)
-        if status.get("lag") is not None or status.get("status") != "running":
+        status = dict(unwrap_response(full_status))
+        status["status"] = normalize_status(status.get("status"))
+        if status.get("lag") is not None or status["status"] != "running":
             return status
         try:
             runtime = await self._request(
@@ -257,7 +301,23 @@ class GoldenGateClient:
         except GoldenGateAPIError as e:
             logger.debug("No /info/status for %s: %s", process_name, e)
             return status
-        return {**status, **unwrap_response(runtime)}
+        merged = {**status, **unwrap_response(runtime)}
+        merged["status"] = normalize_status(merged.get("status"))
+        return merged
+
+    async def get_process_runtime_status(
+        self, process_type: str, process_name: str
+    ) -> Dict[str, Any]:
+        """Get live run state (status, processId, lastStarted, lag) from /info/status."""
+        path = self._info_path(process_type, process_name, "status")
+        return await self._request("GET", path, use_cache=False)
+
+    async def get_process_history(
+        self, process_type: str, process_name: str
+    ) -> Dict[str, Any]:
+        """Get past runs of a process; not available on every GoldenGate version."""
+        path = self._info_path(process_type, process_name, "history")
+        return unwrap_response(await self._request("GET", path, use_cache=False))
 
     async def get_process_report(
         self, process_type: str, process_name: str, report: Optional[str] = None
@@ -303,11 +363,47 @@ class GoldenGateClient:
             await self._request("GET", self._admin_path("messages"), use_cache=False)
         )
 
+    # ==================== Distribution Service ====================
+
+    async def list_distribution_paths(self) -> Dict[str, Any]:
+        """List distribution paths."""
+        return await self._list_collection(self._service_path("distsrvr", "sources"))
+
+    async def get_distribution_path(self, path_name: str) -> Dict[str, Any]:
+        """Get one distribution path, including its source, target and status."""
+        path_name = self._sanitize_name(path_name)
+        return await self._request("GET", self._service_path("distsrvr", f"sources/{path_name}"))
+
+    async def get_distribution_path_checkpoints(self, path_name: str) -> Dict[str, Any]:
+        """Get read and write positions of a distribution path."""
+        path_name = self._sanitize_name(path_name)
+        return unwrap_response(await self._request(
+            "GET", self._service_path("distsrvr", f"sources/{path_name}/checkpoints")
+        ))
+
+    async def list_data_streams(self) -> Dict[str, Any]:
+        """List data streams."""
+        return await self._list_collection(self._service_path("distsrvr", "stream"))
+
+    async def get_data_stream(self, stream_name: str) -> Dict[str, Any]:
+        """Get one data stream's metadata."""
+        stream_name = self._sanitize_name(stream_name)
+        return unwrap_response(await self._request(
+            "GET", self._service_path("distsrvr", f"stream/{stream_name}/info")
+        ))
+
+    async def get_data_stream_definition(self, stream_name: str) -> Dict[str, Any]:
+        """Get a data stream's AsyncAPI YAML definition, under ``content``."""
+        stream_name = self._sanitize_name(stream_name)
+        return await self._request(
+            "GET", self._service_path("distsrvr", f"stream/{stream_name}/yaml"), text=True
+        )
+
     # ==================== Extract Operations ====================
 
     async def list_extracts(self) -> Dict[str, Any]:
         """List all Extract processes."""
-        return await self._request("GET", self._admin_path("extracts"))
+        return await self._list_collection(self._admin_path("extracts"))
 
     async def get_extract_status(
         self, extract_name: str, use_cache: bool = True
@@ -391,7 +487,7 @@ class GoldenGateClient:
 
     async def list_replicats(self) -> Dict[str, Any]:
         """List all Replicat processes."""
-        return await self._request("GET", self._admin_path("replicats"))
+        return await self._list_collection(self._admin_path("replicats"))
 
     async def get_replicat_status(
         self, replicat_name: str, use_cache: bool = True
@@ -541,13 +637,14 @@ class GoldenGateClient:
             raise ValueError(f"Invalid process type: {process_type}")
 
         status = full_status.get("response", full_status)
+        state = normalize_status(status.get("status"))
 
         # Extract error information
         error_info = {
             "process": process_name,
             "type": process_type,
-            "status": status.get("status"),
-            "has_errors": status.get("status") in ["abended", "error"],
+            "status": state,
+            "has_errors": state in ["abended", "error"],
             "messages": []
         }
 
@@ -561,7 +658,7 @@ class GoldenGateClient:
 
     async def list_trails(self) -> Dict[str, Any]:
         """List all trail files."""
-        return await self._request("GET", self._admin_path("trails"))
+        return await self._list_collection(self._admin_path("trails"))
 
     async def get_trail_info(
         self, trail_name: str, trail_path: Optional[str] = None
@@ -679,7 +776,9 @@ class GoldenGateClient:
         read = self.get_extract_status if process_type == "extract" else self.get_replicat_status
         deadline = time.monotonic() + timeout
         while True:
-            status = unwrap_response(await read(process_name, use_cache=False)).get("status")
+            status = normalize_status(
+                unwrap_response(await read(process_name, use_cache=False)).get("status")
+            )
             if status == wanted or time.monotonic() >= deadline:
                 return status
             await asyncio.sleep(interval)
@@ -705,7 +804,9 @@ class GoldenGateClient:
         else:
             read, start, stop = self.get_replicat_status, self.start_replicat, self.stop_replicat
 
-        previous = unwrap_response(await read(process_name, use_cache=False)).get("status")
+        previous = normalize_status(
+            unwrap_response(await read(process_name, use_cache=False)).get("status")
+        )
         if previous in ("running", "starting"):
             await stop(process_name)
             stopped = await self.wait_for_status(process_type, process_name, "stopped", timeout)

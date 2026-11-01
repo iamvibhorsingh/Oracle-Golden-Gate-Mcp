@@ -71,13 +71,23 @@ def _key_suggests_param_blob(key: str) -> bool:
         )
     )
 
-# Match Basic auth and common URL/query credential patterns in free-text errors.
-_ERROR_PATTERNS = (
+# A whole value: quoted (with escapes), an unterminated quote to end of line, or one bare token.
+_VALUE = r"""(?:"(?:\\.|""|[^"\\])*"|'(?:\\.|''|[^'\\])*'|["'][^\r\n]*|[^\s,;}\]]+)"""
+
+# Credential patterns in free text: reports, GoldenGate messages, errors.
+_TEXT_PATTERNS = (
     re.compile(
-        r"(?i)(password|passwd|pwd|secret|token|api[_-]?key)\s*[=:]\s*\S+",
+        r"-----BEGIN (?:[A-Z]+ )?PRIVATE KEY-----.*?(?:-----END (?:[A-Z]+ )?PRIVATE KEY-----|\Z)",
+        re.DOTALL,
     ),
-    re.compile(r"(?i)//[^:]+:[^@]+@"),
-    re.compile(r"(?i)Bearer\s+\S+"),
+    re.compile(r"(?i)\bAuthorization[\"']?\s*:\s*[^\r\n]+"),
+    re.compile(
+        r"(?i)(password|passwd|pwd|secret|token|api[_-]?key)[\"']?\s*[=:]\s*" + _VALUE,
+    ),
+    # GoldenGate parameter syntax: USERID ggs PASSWORD hunter2
+    re.compile(r"(?i)\b(?:password|passwd)\s+(?![\s:=])" + _VALUE),
+    re.compile(r"(?i)//[^:/\s]+:[^@\s]+@"),
+    re.compile(r"(?i)\bBearer\s+\S+"),
 )
 
 
@@ -90,9 +100,17 @@ def _key_is_sensitive(key: str) -> bool:
     return any(frag in k for frag in _SENSITIVE_KEY_FRAGMENTS)
 
 
+def redact_text(text: str) -> str:
+    """Scrub credential patterns from free text, whatever field it arrived in."""
+    for pat in _TEXT_PATTERNS:
+        text = pat.sub(lambda _m: _REDACT_PLACEHOLDER, text)
+    return text
+
+
 def redact_sensitive_data(obj: Any, *, _seen: Set[int] | None = None) -> Any:
     """
-    Walk JSON-like structures and return a new tree with sensitive dict keys redacted.
+    Walk JSON-like structures and return a new tree with sensitive dict keys redacted
+    and credential patterns scrubbed from every string.
     """
     if _seen is None:
         _seen = set()
@@ -126,11 +144,14 @@ def redact_sensitive_data(obj: Any, *, _seen: Set[int] | None = None) -> Any:
     if isinstance(obj, (list, tuple)):
         return type(obj)(redact_sensitive_data(item, _seen=_seen) for item in obj)
 
-    if isinstance(obj, (str, int, float, bool)) or obj is None:
+    if isinstance(obj, str):
+        return redact_text(obj)
+
+    if isinstance(obj, (int, float, bool)) or obj is None:
         return obj
 
     # sets, bytes, etc. — stringify without leaking nested structures
-    return str(obj)
+    return redact_text(str(obj))
 
 
 def redact_sensitive_data_copy(obj: Any) -> Any:
@@ -142,7 +163,4 @@ def redact_error_text(message: str, max_len: int = 2000) -> str:
     """Scrub common credential patterns from exception or HTTP error text."""
     if not message:
         return message
-    text = message[:max_len]
-    for pat in _ERROR_PATTERNS:
-        text = pat.sub(lambda _m: _REDACT_PLACEHOLDER, text)
-    return text
+    return redact_text(message[:max_len])

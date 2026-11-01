@@ -170,7 +170,13 @@ async def get_tools(principal: CurrentPrincipal):
     return {"tools": [t.model_dump(exclude_none=True) for t in tools]}
 
 
-_ERROR_STATUS = {"unknown_tool": 404, "denied": 403, "invalid": 400, "error": 500}
+_ERROR_STATUS = {
+    "unknown_tool": 404,
+    "denied": 403,
+    "blocked": 409,
+    "invalid": 400,
+    "error": 500,
+}
 
 
 @app.post("/api/tools/execute")

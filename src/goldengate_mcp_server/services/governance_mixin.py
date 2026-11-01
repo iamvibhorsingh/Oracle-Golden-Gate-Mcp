@@ -88,6 +88,9 @@ class GovernanceMixin:
         if not config.read_only and not config.write_deployments:
             findings.append("Writes are enabled on every deployment (GG_WRITE_DEPLOYMENTS unset)")
 
+        if config.prestart_checks != "enforce":
+            findings.append(f"Pre-start checks are {config.prestart_checks}, not enforced")
+
         return {
             "version": _server_version(),
             "read_only": config.read_only,
@@ -97,6 +100,7 @@ class GovernanceMixin:
                 "protected_deployments": sorted(self.policy.protected_deployments),
                 "disabled_tools": sorted(self.policy.disabled_tools),
                 "max_batch_size": self.policy.max_batch_size,
+                "prestart_checks": config.prestart_checks,
                 "change_ticket_pattern": self.policy.change_ticket_pattern,
             },
             "deployments": deployments,

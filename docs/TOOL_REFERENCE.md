@@ -8,6 +8,8 @@ Severity where used is always one of: `normal` | `elevated` | `high` | `critical
 
 Policy denials return `{ error, code, reason, tool }`, where `code` is one of `tool_disabled`, `insufficient_role`, `deployment_forbidden`, `read_only`, `deployment_not_writable`, `batch_too_large`, `change_ticket_required`, `change_ticket_invalid`. Over REST these are HTTP 403.
 
+A start refused by pre-start checks returns `{ error, code: "prestart_check_failed", tool, prestart }` (HTTP 409 over REST).
+
 ---
 
 ## `get_fleet_health`
@@ -37,9 +39,29 @@ Inputs: `deployment`, `process_type`, `process_name`, optional `tail_lines` (def
 
 ---
 
+## `check_start_readiness`
+
+Inputs: `deployment`, `process_type`, `process_name`. Returns `{ process, process_type, status, blockers[], warnings[] }`, each entry `{ code, message }`.
+
+Blocker codes: `not_found`, `invalid_name`, `check_unavailable`, `initial_load_unverified`, `initial_load_extract_not_stopped`, `initial_load_run_failed`, `initial_load_report_failure`, `initial_load_operator_stop`, `initial_load_changed`.
+
+Warning codes: `no_local_producer`, `producer_not_running`, `previous_abend`, `history_unavailable`, `source_unknown`, `too_many_extracts`.
+
+---
+
+## Distribution paths and data streams
+
+- `list_distribution_paths`, `list_data_streams`: GoldenGate collection (`response.items[]`), all pages
+- `get_distribution_path`: inputs `deployment`, `path_name`; GoldenGate detail
+- `get_distribution_path_checkpoints`: inputs `deployment`, `path_name`; checkpoint body
+- `get_data_stream`: inputs `deployment`, `stream_name`; stream metadata
+- `get_data_stream_definition`: inputs `deployment`, `stream_name`; `{ content }` with the AsyncAPI YAML
+
+---
+
 ## Write tools
 
-All accept `dry_run` and `change_ticket`. Successful results include `correlation_id`.
+All accept `dry_run` and `change_ticket`. Successful results include `correlation_id`. Start tools also include `prestart: { enforced, blocked[], processes[] }`, unless `GG_PRESTART_CHECKS=off`.
 
 - `dry_run: true`: `{ dry_run, operation, deployment, process_type, targets[], change_ticket_required, note }`, where each target is `{ name, current_status, would_change }` or `{ name, error }`
 - `restart_process`: inputs `deployment`, `process_name`, `process_type`, optional `timeout_seconds` (default 120). Returns `{ success, previous_status, status }`, plus `error` if the process would not stop

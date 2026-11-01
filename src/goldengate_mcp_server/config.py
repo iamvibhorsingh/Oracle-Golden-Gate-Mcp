@@ -176,6 +176,13 @@ class Config(BaseModel):
         description="Regex a change_ticket must fully match"
     )
 
+    prestart_checks: str = Field(
+        default="enforce",
+        description="Checks before starting a process: enforce (blockers refuse the start), "
+        "warn (report only) or off",
+        pattern="^(enforce|warn|off)$",
+    )
+
     # Logging
     log_level: str = Field(default="INFO", description="Python log level")
 
@@ -239,6 +246,7 @@ class Config(BaseModel):
         - GG_DISABLED_TOOLS: Comma-separated tools to turn off
         - GG_MAX_BATCH_SIZE: Most processes per batch call (default: 25)
         - GG_CHANGE_TICKET_PATTERN: Regex a change_ticket must fully match
+        - GG_PRESTART_CHECKS: enforce, warn or off (default: enforce)
         - GG_LOG_LEVEL: Log level (default: INFO)
         - GG_LOG_FORMAT: text or json (default: text)
         - GG_DEPLOYMENTS: JSON string with deployment configurations
@@ -276,6 +284,7 @@ class Config(BaseModel):
             "change_ticket_pattern": os.getenv(
                 "GG_CHANGE_TICKET_PATTERN", DEFAULT_CHANGE_TICKET_PATTERN
             ),
+            "prestart_checks": os.getenv("GG_PRESTART_CHECKS", "enforce").lower(),
             "log_level": os.getenv("GG_LOG_LEVEL", "INFO").upper(),
             "log_format": os.getenv("GG_LOG_FORMAT", "text").lower(),
         }

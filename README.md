@@ -51,6 +51,7 @@ Full rules are implemented in `goldengate_mcp_server.models.classify_severity`. 
 ### Operational Efficiency
 - **Batch operations** - Start/stop multiple processes at once
 - **Safe restarts** - `restart_process` confirms a process stopped before starting it again
+- **Pre-start safety checks** - Refuses to start a Replicat on an initial load that didn't finish cleanly
 - **Dry runs** - Preview any write against live status before applying it
 - **Config drift detection** - Save redacted snapshots and get a line diff against the live config
 - **Trail monitoring** - Inspect trail files and sizes
@@ -109,6 +110,7 @@ GG_BACKUP_DIR=./backups                    # Config snapshots; compare only read
 # GG_PROTECTED_DEPLOYMENTS=gg21_prod       # Deployments whose writes need a change_ticket
 # GG_DISABLED_TOOLS=batch_stop_processes   # Tools turned off for everyone
 # GG_MAX_BATCH_SIZE=25                     # Most processes per batch call
+# GG_PRESTART_CHECKS=enforce               # enforce (default), warn or off
 # GG_LOG_FORMAT=json                       # text (default) or json
 
 # Deployment 1 (GoldenGate 21)
@@ -214,6 +216,13 @@ The MCP server provides the following tools for AI assistants:
 - `get_process_report` — Tail of a process report plus parsed `OGG-nnnnn` errors and warnings
 - `get_process_checkpoints` — Read and write checkpoint positions
 - `get_deployment_messages` — Recent Administration Server messages
+- `check_start_readiness` — Blockers and warnings for starting a process, from live state
+
+### Distribution Paths & Data Streams (Read-Only)
+- `list_distribution_paths` / `get_distribution_path` — Paths sending trails to other deployments, with source, target and status
+- `get_distribution_path_checkpoints` — Read and write positions of a path
+- `list_data_streams` / `get_data_stream` — Data streams and their metadata
+- `get_data_stream_definition` — AsyncAPI YAML definition of a stream
 
 ### Process Control (Requires Write Mode)
 - `start_extract` / `stop_extract` — Start/stop an Extract process
@@ -222,7 +231,7 @@ The MCP server provides the following tools for AI assistants:
 - `batch_stop_processes` — Stop multiple Extracts or Replicats in parallel
 - `restart_process` — Stop, wait until stopped, start, wait until running
 
-Every write tool accepts `dry_run` (report what would change, change nothing) and `change_ticket` (required on protected deployments).
+Every write tool accepts `dry_run` (report what would change, change nothing) and `change_ticket` (required on protected deployments). Starts also run the pre-start checks described under [Enterprise Deployment](#enterprise-deployment).
 
 ### Governance (Admin Role)
 - `search_audit_log` — Who ran what, on which deployment, with what result (rotated files included)
@@ -412,6 +421,17 @@ GG_DISABLED_TOOLS=batch_stop_processes
 
 Deployment names here must exist, so a typo stops startup rather than leaving production unprotected. The server checks a ticket's format and records it in the audit log; it does not look the ticket up in your ticketing system.
 
+### Pre-start checks
+
+`start_*`, `restart_process` and `batch_start_processes` inspect live state before acting, and `check_start_readiness` runs the same checks on request.
+
+| Result | When |
+|--------|------|
+| **Blocked** | The process doesn't exist; or an Initial Load Replicat's Extract is still running, failed, was stopped by an operator, has a failure in its report, or can't be identified |
+| **Warning** | No local Extract writes the trail (normal when a distribution path delivers it), its Extract isn't running, a previous abend, or history that isn't available |
+
+A process is treated as initial load if it uses `SPECIALRUN`, has `source: tables`, or reads a file an Extract writes with `EXTFILE`. A blocked batch starts nothing. A blocked start returns `code: prestart_check_failed` (HTTP 409), is recorded as a `security` audit event, and appears in `dry_run` output without being refused. Set `GG_PRESTART_CHECKS=warn` to report without refusing, or `off` to skip the checks.
+
 ### Observability
 
 - `GET /metrics` (authenticated): Prometheus counters for tool calls, durations, policy denials and cache hits
@@ -537,7 +557,8 @@ mypy src/
 - **Trail endpoints**: `list_trails` and `get_trail_info` may not be available on GG Free edition (Enterprise only)
 - **Database correlation**: `check_database_correlation` requires optional oracledb monitoring config (`GG_ORACLEDB_*` env vars)
 - **Write operations**: `start_*`, `stop_*`, `restart_process`, `batch_*` require `GG_READ_ONLY=false` and should be tested thoroughly before production use
-- **Live coverage**: `get_process_report`, `get_process_checkpoints`, `get_deployment_messages` and the status fallback follow Oracle's REST documentation and are tested against a fake server; run `pytest -m requires_gg` and try them on your GoldenGate version before relying on them
+- **Live coverage**: reports, checkpoints, messages, pre-start checks, distribution path and data stream tools, and the status fallback follow Oracle's REST documentation and are tested against a fake server; run `pytest -m requires_gg` and try them on your GoldenGate version before relying on them
+- **Distribution Service routing**: distribution tools assume `/services/<deployment>/distsrvr/v2/...` through the Service Manager, matching how `adminsrvr` is reached
 - **Single process**: Audit chain, counters and cache live in one process; run one replica per audit log
 - **Metrics mode vs pass-through mode**: Pass-through is the default (`GG_ENABLE_METRICS=false`): no SQLite store or background collection — no disk usage, no baseline tools (`diagnose_lag_issue`, `get_performance_baseline`, `get_lag_trend`). Useful for large-scale deployments (1000s of instances) where you only need live REST monitoring. Set `GG_ENABLE_METRICS=true` for metrics mode, where the background collection loop runs up to **50 deployments concurrently** — practical ceiling is network/disk throughput, not deployment count.
 - **SQLite storage at scale**: With metrics enabled, steady-state DB size grows with deployment count (~50 GB at 5000 deployments with 30-day retention). Size appropriately or keep `GG_ENABLE_METRICS=false` (the default) if local storage is a constraint.
@@ -604,7 +625,7 @@ MIT License
 
 ## Security Features
 
-- **Credential Redaction**: Sensitive keys, parameter-file credential lines (string or list form, comments included) and common secret patterns in error text are scrubbed from responses, audit logs and logs. It is pattern-based, so treat it as a safety net
+- **Credential Redaction**: Sensitive keys, parameter-file credential lines (string or list form, comments included) and common secret patterns in any string are scrubbed from responses, audit logs and logs. It is pattern-based, so treat it as a safety net
 - **Access Control**: Roles, per-deployment scoping, write allowlists and change tickets
 - **Audit Logging**: Complete, hash-chained (tamper-evident) trail of all operations with timestamps, arguments (redacted), and results
 - **Read-Only Default**: Safe by default — requires explicit `GG_READ_ONLY=false` for write operations

@@ -20,7 +20,7 @@ GG_DEPLOYMENT_1_PASSWORD=your_password
 - **`Config.to_file(path, include_secrets=False)`** (default) writes placeholder passwords, not real secrets. Use `include_secrets=True` only in controlled exports.
 - **`*_FILE` settings** (`GG_DEPLOYMENT_<N>_PASSWORD_FILE`, `GG_REST_API_TOKEN_FILE`, `GG_REST_API_KEYS_FILE`, `password_file` in JSON) read mounted secrets instead of environment variables. REST keys store only the SHA-256 of each token.
 - **`backup_deployment_config`** returns JSON in the tool response only. **`save_config_snapshot`** writes a redacted snapshot to `GG_BACKUP_DIR` with owner-only permissions, and `compare_deployment_configs` refuses paths outside that directory and snapshots of other deployments.
-- **Tool responses** are passed through `redact_sensitive_data` before serialization so nested keys like `password` / `token` / `api_key` and GoldenGate parameter-file credential lines (including the `config` and report `lines` arrays, and commented-out lines) are masked. **Audit logs** use the same helpers for action arguments (nested), result errors, and security-event details; database monitor connection errors are scrubbed for URL/basic-auth patterns.
+- **Tool responses** are passed through `redact_sensitive_data` before serialization so nested keys like `password` / `token` / `api_key`, GoldenGate parameter-file credential lines (including the `config` and report `lines` arrays, and commented-out lines), and credential patterns in any other string (`PASSWORD x`, `password=...`, authorization headers, private keys) are masked. **Audit logs** use the same helpers for action arguments (nested), result errors, and security-event details; database monitor connection errors are scrubbed for URL/basic-auth patterns.
 
 ### 3. SSL/TLS Verification
 ```bash
@@ -59,6 +59,7 @@ GG_ENABLE_METRICS=false  # Default: no SQLite store, no background collection
 - **Write allowlist**: `GG_WRITE_DEPLOYMENTS` keeps other deployments read-only
 - **Change tickets**: `GG_PROTECTED_DEPLOYMENTS` requires a `change_ticket` matching `GG_CHANGE_TICKET_PATTERN`. The format is checked and the value audited; the ticket itself is not verified against your ticketing system
 - **Limits**: `GG_MAX_BATCH_SIZE` and `GG_DISABLED_TOOLS`
+- **Pre-start checks**: `GG_PRESTART_CHECKS=enforce` (default) refuses starts with known-unsafe evidence, such as an Initial Load Replicat whose Extract didn't finish cleanly. These are safety checks on GoldenGate's reported state and don't replace GoldenGate's own permissions
 - Denials are written to the audit log as `security` events and counted in `ggmcp_policy_denials_total`
 - Use the `get_server_posture` tool to review the effective settings
 - `GG_REST_API_TOKEN` is one shared admin identity and stdio clients run as admin, so named keys are the only way to attribute REST calls to individuals
@@ -98,6 +99,7 @@ Before deploying to production:
 - [ ] Read-only mode enabled, or `GG_WRITE_DEPLOYMENTS` and `GG_PROTECTED_DEPLOYMENTS` set
 - [ ] REST callers use named keys with the lowest workable role
 - [ ] REST port behind TLS
+- [ ] `GG_PRESTART_CHECKS` left at `enforce`
 - [ ] `get_server_posture` reports no unexpected findings
 - [ ] `goldengate-audit-verify` scheduled, with `head_hash` pinned off-host
 - [ ] SSL/TLS verification enabled

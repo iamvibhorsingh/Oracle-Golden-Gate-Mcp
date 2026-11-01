@@ -3,20 +3,17 @@
 from __future__ import annotations
 
 import asyncio
-import re
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
+from ..process_safety import check_start
 from ..redaction import redact_error_text
-from ..utils import parse_lag_duration
+from ..utils import parse_lag_duration, parse_ogg_messages
 
 _FLEET_CONCURRENCY = 20
 _MAX_REPORT_ERRORS = 20
 
 _SEVERITY_ORDER = {"critical": 0, "high": 1, "elevated": 2}
-
-# "2024-04-03 22:34:36  WARNING OGG-30426  Error mapping update record..."
-_OGG_MESSAGE = re.compile(r"\b(ERROR|WARNING)\s+(OGG-\d{5})\b\s*(.*)")
 
 
 def _attention_items(health: Dict[str, Any], lag_threshold: float) -> List[Dict[str, Any]]:
@@ -135,15 +132,7 @@ class InsightsMixin:
         body = await client.get_process_report(process_type, process_name, report)
         lines = [str(line) for line in body.get("lines", [])]
 
-        messages = []
-        for line in lines:
-            match = _OGG_MESSAGE.search(line)
-            if match:
-                messages.append({
-                    "level": match.group(1),
-                    "code": match.group(2),
-                    "text": match.group(3).strip(),
-                })
+        messages = parse_ogg_messages(lines)
 
         return {
             "deployment": deployment,
@@ -154,6 +143,33 @@ class InsightsMixin:
             "ogg_messages": messages[-_MAX_REPORT_ERRORS:],
             "lines": lines[-max(1, min(tail_lines, 1000)):],
         }
+
+    async def _check_start_readiness(
+        self, deployment: str, process_type: str, process_name: str
+    ) -> Dict[str, Any]:
+        return await check_start(self._get_client(deployment), process_type, process_name)
+
+    async def _list_distribution_paths(self, deployment: str) -> Dict[str, Any]:
+        return await self._get_client(deployment).list_distribution_paths()
+
+    async def _get_distribution_path(self, deployment: str, path_name: str) -> Dict[str, Any]:
+        return await self._get_client(deployment).get_distribution_path(path_name)
+
+    async def _get_distribution_path_checkpoints(
+        self, deployment: str, path_name: str
+    ) -> Dict[str, Any]:
+        return await self._get_client(deployment).get_distribution_path_checkpoints(path_name)
+
+    async def _list_data_streams(self, deployment: str) -> Dict[str, Any]:
+        return await self._get_client(deployment).list_data_streams()
+
+    async def _get_data_stream(self, deployment: str, stream_name: str) -> Dict[str, Any]:
+        return await self._get_client(deployment).get_data_stream(stream_name)
+
+    async def _get_data_stream_definition(
+        self, deployment: str, stream_name: str
+    ) -> Dict[str, Any]:
+        return await self._get_client(deployment).get_data_stream_definition(stream_name)
 
     async def _get_process_checkpoints(
         self,
