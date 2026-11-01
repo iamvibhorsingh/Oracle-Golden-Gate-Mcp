@@ -90,6 +90,88 @@ INSIGHTS_TOOLS: List[Tool] = [
             "required": ["deployment"],
         },
     ),
+    Tool(
+        name="check_start_readiness",
+        description=(
+            "Would starting this process be safe? Returns blockers[] and warnings[] from live "
+            "state, including whether an Initial Load Extract finished cleanly. Changes nothing."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": _PROCESS_PROPERTIES,
+            "required": ["deployment", "process_type", "process_name"],
+        },
+    ),
+    Tool(
+        name="list_distribution_paths",
+        description="Distribution paths sending trails to other deployments.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "deployment": {"type": "string", "description": "Name of the deployment"},
+            },
+            "required": ["deployment"],
+        },
+    ),
+    Tool(
+        name="get_distribution_path",
+        description="One distribution path: source, target and status.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "deployment": {"type": "string", "description": "Name of the deployment"},
+                "path_name": {"type": "string", "description": "Name of the distribution path"},
+            },
+            "required": ["deployment", "path_name"],
+        },
+    ),
+    Tool(
+        name="get_distribution_path_checkpoints",
+        description="Read and write positions of a distribution path.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "deployment": {"type": "string", "description": "Name of the deployment"},
+                "path_name": {"type": "string", "description": "Name of the distribution path"},
+            },
+            "required": ["deployment", "path_name"],
+        },
+    ),
+    Tool(
+        name="list_data_streams",
+        description="Data streams exposing trail data to downstream consumers.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "deployment": {"type": "string", "description": "Name of the deployment"},
+            },
+            "required": ["deployment"],
+        },
+    ),
+    Tool(
+        name="get_data_stream",
+        description="Metadata of one data stream.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "deployment": {"type": "string", "description": "Name of the deployment"},
+                "stream_name": {"type": "string", "description": "Name of the stream"},
+            },
+            "required": ["deployment", "stream_name"],
+        },
+    ),
+    Tool(
+        name="get_data_stream_definition",
+        description="AsyncAPI YAML definition of a data stream, under content.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "deployment": {"type": "string", "description": "Name of the deployment"},
+                "stream_name": {"type": "string", "description": "Name of the stream"},
+            },
+            "required": ["deployment", "stream_name"],
+        },
+    ),
 ]
 
 ToolHandler = Callable[[Any], Awaitable[Any]]
@@ -124,6 +206,40 @@ def register_insights_handlers(dispatch: Dict[str, ToolHandler], app: Any) -> No
             arguments["deployment"], arguments.get("limit", 50)
         )
 
+    async def check_start_readiness(arguments: Any):
+        return await app._check_start_readiness(
+            arguments["deployment"], arguments["process_type"], arguments["process_name"]
+        )
+
+    async def list_distribution_paths(arguments: Any):
+        return await app._list_distribution_paths(arguments["deployment"])
+
+    async def get_distribution_path(arguments: Any):
+        return await app._get_distribution_path(arguments["deployment"], arguments["path_name"])
+
+    async def get_distribution_path_checkpoints(arguments: Any):
+        return await app._get_distribution_path_checkpoints(
+            arguments["deployment"], arguments["path_name"]
+        )
+
+    async def list_data_streams(arguments: Any):
+        return await app._list_data_streams(arguments["deployment"])
+
+    async def get_data_stream(arguments: Any):
+        return await app._get_data_stream(arguments["deployment"], arguments["stream_name"])
+
+    async def get_data_stream_definition(arguments: Any):
+        return await app._get_data_stream_definition(
+            arguments["deployment"], arguments["stream_name"]
+        )
+
+    dispatch["check_start_readiness"] = check_start_readiness
+    dispatch["list_distribution_paths"] = list_distribution_paths
+    dispatch["get_distribution_path"] = get_distribution_path
+    dispatch["get_distribution_path_checkpoints"] = get_distribution_path_checkpoints
+    dispatch["list_data_streams"] = list_data_streams
+    dispatch["get_data_stream"] = get_data_stream
+    dispatch["get_data_stream_definition"] = get_data_stream_definition
     dispatch["get_fleet_health"] = get_fleet_health
     dispatch["get_process_report"] = get_process_report
     dispatch["get_process_checkpoints"] = get_process_checkpoints

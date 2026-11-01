@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Tuple
 
 from ..redaction import redact_error_text
-from ..utils import unwrap_response
+from ..utils import normalize_status, unwrap_response
 
 logger = logging.getLogger(__name__)
 
@@ -47,10 +47,9 @@ class WriteMixin:
             )
         return {"error": f"Unknown write operation: {operation}"}
 
-    async def _preview_write(self, operation: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
-        """What a write tool would do to each process, from live status. Changes nothing."""
-        client = self._get_client(arguments["deployment"])
-
+    @staticmethod
+    def _write_targets(operation: str, arguments: Dict[str, Any]) -> Tuple[str, List[str]]:
+        """``(process_type, process_names)`` a write tool call acts on."""
         if "process_type" in arguments:
             process_type = arguments["process_type"]
         else:
@@ -60,13 +59,21 @@ class WriteMixin:
             or arguments.get("extract_name")
             or arguments.get("replicat_name")
         ]
+        return process_type, names
+
+    async def _preview_write(self, operation: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
+        """What a write tool would do to each process, from live status. Changes nothing."""
+        client = self._get_client(arguments["deployment"])
+        process_type, names = self._write_targets(operation, arguments)
         is_extract = process_type == "extract"
         read = client.get_extract_status if is_extract else client.get_replicat_status
         wanted = "stopped" if "stop" in operation else "running"
 
         async def target(name: str) -> Dict[str, Any]:
             try:
-                status = unwrap_response(await read(name, use_cache=False)).get("status")
+                status = normalize_status(
+                    unwrap_response(await read(name, use_cache=False)).get("status")
+                )
             except Exception as e:
                 return {"name": name, "error": redact_error_text(str(e))}
             changes = operation == "restart_process" or status != wanted

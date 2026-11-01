@@ -16,7 +16,7 @@ import pytest
 from goldengate_mcp_server import server as server_module
 from goldengate_mcp_server.audit import verify_audit_log
 from goldengate_mcp_server.config import Config, DeploymentConfig, env_bool
-from goldengate_mcp_server.goldengate_client import GoldenGateClient
+from goldengate_mcp_server.goldengate_client import GoldenGateAPIError, GoldenGateClient
 from goldengate_mcp_server.policy import Principal, Role, current_principal
 from goldengate_mcp_server.redaction import redact_parameter_file_text, redact_sensitive_data
 from goldengate_mcp_server.server import GoldenGateMCPServer
@@ -44,6 +44,9 @@ class FakeGG:
                 "config": ["REPLICAT REP1", PASSWORD_LINE, "MAP a.*, TARGET b.*;"],
             },
         }
+        self.responses = {}  # path -> body, checked before the defaults below
+        self.distribution = {}  # path under distsrvr/v2/ -> body
+        self.yaml = ""
         self.writes = []
         self.ignore_stop = False
 
@@ -55,8 +58,19 @@ class FakeGG:
         path = request.url.path
         if path == "/services/v2/deployments":
             return self._reply({"items": []})
+        distribution = self.prefix.replace("adminsrvr", "distsrvr")
+        if path.startswith(distribution):
+            path = path[len(distribution):]
+            if path.endswith("/yaml"):
+                return httpx.Response(200, text=self.yaml)
+            if path in self.distribution:
+                return self._reply(self.distribution[path])
+            return httpx.Response(404, json={"error": "not found"})
         assert path.startswith(self.prefix)
         path = path[len(self.prefix):]
+
+        if request.method == "GET" and path in self.responses:
+            return self._reply(self.responses[path])
 
         if request.method == "PATCH":
             wanted = json.loads(request.content)["status"]
@@ -331,7 +345,7 @@ async def test_batch_limit(tmp_path, fresh_audit):
 
 async def test_batch_with_failures_is_audited_as_failure(server):
     outcome = await server.execute_tool(
-        "batch_start_processes",
+        "batch_stop_processes",
         {"deployment": "prod", "process_names": ["bad name"], "process_type": "extract"},
     )
     assert outcome.status == "failed"
@@ -599,6 +613,343 @@ def test_audit_cli_exit_codes(tmp_path, fresh_audit, monkeypatch, server):
     assert missing.value.code == 1
 
 
+# ---- Redaction of free text ---------------------------------------------------
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "USERID u PASSWORD hunter2",
+        "USERID u, PASSWORD 'hunter2 with spaces'",
+        'password="hunter2 with spaces"',
+        "Authorization: Basic hunter2",
+        "-----BEGIN RSA PRIVATE KEY-----\nhunter2\n-----END RSA PRIVATE KEY-----",
+    ],
+)
+@pytest.mark.parametrize("field", ["messages", "text", "issues"])
+def test_every_string_is_scrubbed_whatever_its_key(field, text):
+    out = json.dumps(redact_sensitive_data({field: [text], "nested": {field: text}}))
+    assert "hunter2" not in out
+
+
+def test_ordinary_text_survives_scrubbing():
+    text = "Extract EXT1 is abended at https://gg.example:9000/services"
+    assert redact_sensitive_data({"note": text}) == {"note": text}
+
+
+async def test_messages_and_report_errors_are_redacted(server):
+    fake = server.fakes["prod"]
+    fake.responses["messages"] = {"lines": [PASSWORD_LINE]}
+    fake.responses["replicats/REP1/info/reports/REP1.rpt"] = {
+        "lines": [f"2024-04-03 22:34:36  ERROR   OGG-01296  Bad {PASSWORD_LINE}"]
+    }
+    messages = await server.execute_tool("get_deployment_messages", {"deployment": "prod"})
+    report = await server.execute_tool(
+        "get_process_report",
+        {"deployment": "prod", "process_type": "replicat", "process_name": "REP1"},
+    )
+    assert "hunter2" not in server._format_result(messages.result)
+    assert "hunter2" not in server._format_result(report.result)
+
+
+# ---- Status case and pagination ----------------------------------------------
+
+async def test_uppercase_runtime_status_is_not_reported_as_stopped(server):
+    fake = server.fakes["prod"]
+    del fake.processes["extracts/EXT1"]["lag"]
+    fake.responses["extracts/EXT1/info/status"] = {"status": "RUNNING", "lag": 7}
+    lag = await server.execute_tool(
+        "get_extract_lag", {"deployment": "prod", "extract_name": "EXT1"}
+    )
+    assert lag.result["status"] == "running"
+    assert lag.result["severity"] != "critical"
+
+
+async def test_uppercase_list_status_counts_as_running(server):
+    fake = server.fakes["prod"]
+    fake.processes["extracts/EXT1"]["status"] = "RUNNING"
+    health = await server._get_deployment_health("prod")
+    assert health["extracts"][0]["status"] == "running"
+
+
+def _paged_client(pages):
+    seen = []
+
+    def handler(request):
+        seen.append(request.url)
+        return httpx.Response(200, json=pages[request.url.params.get("offset", "0")])
+
+    client = GoldenGateClient("https://gg.example", "u", "p", deployment_name="Source")
+    client.client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    return client, seen
+
+
+async def test_collections_follow_next_links_without_leaving_the_host():
+    client, seen = _paged_client({
+        "0": {
+            "links": [{"rel": "next", "href": "https://elsewhere.example/x?offset=1"}],
+            "response": {"items": [{"name": "A"}]},
+        },
+        "1": {"response": {"items": [{"name": "B"}]}},
+    })
+    listing = await client.list_extracts()
+    assert [i["name"] for i in listing["response"]["items"]] == ["A", "B"]
+    assert {url.host for url in seen} == {"gg.example"}
+    assert all(url.path.endswith("/adminsrvr/v2/extracts") for url in seen)
+
+
+async def test_endless_pagination_is_an_error_not_a_partial_list():
+    client, _ = _paged_client({
+        "0": {"links": [{"rel": "next", "href": "https://gg.example/x?offset=1"}]},
+        "1": {"links": [{"rel": "next", "href": "https://gg.example/x?offset=1"}]},
+    })
+    with pytest.raises(GoldenGateAPIError, match="all pages"):
+        await client.list_extracts()
+
+
+# ---- Pre-start checks --------------------------------------------------------
+
+def _initial_load(fake, *, status="STOPPED", exit_code=0, report=("Process id: 7", "Done")):
+    fake.processes["extracts/ILE"] = {
+        "status": "stopped",
+        "source": "tables",
+        "config": ["EXTRACT ILE", "EXTFILE dirdat/il"],
+    }
+    fake.processes["replicats/ILR"] = {
+        "status": "stopped",
+        "source": {"name": "il", "path": "dirdat"},
+        "config": ["SPECIALRUN", "REPLICAT ILR"],
+    }
+    fake.responses["extracts/ILE/info/status"] = {
+        "status": status,
+        "processId": 7,
+        "lastStarted": "2026-10-01T00:00:00Z",
+    }
+    fake.responses["extracts/ILE/info/history"] = {
+        "history": [{"processId": 7, "started": "2026-10-01T00:00:00Z", "exitCode": exit_code}]
+    }
+    fake.responses["extracts/ILE/info/reports/ILE.rpt"] = {"lines": list(report)}
+
+
+START_ILR = {"deployment": "prod", "replicat_name": "ILR"}
+
+
+async def test_clean_initial_load_may_start(server):
+    _initial_load(server.fakes["prod"])
+    outcome = await server.execute_tool("start_replicat", START_ILR)
+    assert outcome.ok
+    assert outcome.result["prestart"]["processes"][0]["blockers"] == []
+    assert server.fakes["prod"].writes == [("replicats/ILR", "running")]
+
+
+@pytest.mark.parametrize(
+    ("setup", "code"),
+    [
+        ({"status": "RUNNING"}, "initial_load_extract_not_stopped"),
+        ({"exit_code": 1}, "initial_load_run_failed"),
+        ({"report": ["ERROR  Process ABENDING"]}, "initial_load_report_failure"),
+        ({"report": ["OGG-00990 stopped"]}, "initial_load_operator_stop"),
+        ({"report": []}, "initial_load_unverified"),
+    ],
+)
+async def test_unfinished_initial_load_blocks_the_start(server, setup, code):
+    fake = server.fakes["prod"]
+    _initial_load(fake, **setup)
+    outcome = await server.execute_tool("start_replicat", START_ILR)
+    assert outcome.status == "blocked"
+    assert outcome.result["prestart"]["processes"][0]["blockers"][0]["code"] == code
+    assert fake.writes == []
+    assert server.audit_logger.search_logs(event_type="security")[-1]["details"]["code"] == (
+        "prestart_check_failed"
+    )
+
+
+async def test_initial_load_with_no_producer_is_blocked(server):
+    fake = server.fakes["prod"]
+    _initial_load(fake)
+    del fake.processes["extracts/ILE"]
+    outcome = await server.execute_tool("start_replicat", START_ILR)
+    assert outcome.result["prestart"]["processes"][0]["blockers"][0]["code"] == (
+        "initial_load_unverified"
+    )
+
+
+async def test_replicat_reading_an_extfile_is_treated_as_initial_load(server):
+    fake = server.fakes["prod"]
+    _initial_load(fake, exit_code=1)
+    fake.processes["replicats/ILR"]["config"] = ["REPLICAT ILR"]
+    assert (await server.execute_tool("start_replicat", START_ILR)).status == "blocked"
+
+
+async def test_missing_history_is_a_warning(server):
+    fake = server.fakes["prod"]
+    _initial_load(fake)
+    del fake.responses["extracts/ILE/info/history"]
+    outcome = await server.execute_tool("start_replicat", START_ILR)
+    assert outcome.ok
+    codes = [w["code"] for w in outcome.result["prestart"]["processes"][0]["warnings"]]
+    assert codes == ["history_unavailable"]
+
+
+async def test_trail_from_a_distribution_path_only_warns(server):
+    fake = server.fakes["prod"]
+    fake.processes["replicats/REP2"] = {
+        "status": "stopped",
+        "source": {"name": "rt", "path": "dirdat"},
+        "config": ["REPLICAT REP2"],
+    }
+    outcome = await server.execute_tool(
+        "start_replicat", {"deployment": "prod", "replicat_name": "REP2"}
+    )
+    assert outcome.ok
+    report = outcome.result["prestart"]["processes"][0]
+    assert [w["code"] for w in report["warnings"]] == ["no_local_producer"]
+
+
+async def test_stopped_local_producer_warns(server):
+    fake = server.fakes["prod"]
+    fake.processes["extracts/EXT1"].update(
+        status="stopped", source="tranlogs", config=["EXTRACT EXT1", "EXTTRAIL dirdat/ea"]
+    )
+    fake.processes["replicats/REP2"] = {
+        "status": "stopped",
+        "source": {"name": "ea", "path": "dirdat"},
+        "config": ["REPLICAT REP2"],
+    }
+    report = (await server.execute_tool(
+        "check_start_readiness",
+        {"deployment": "prod", "process_type": "replicat", "process_name": "REP2"},
+    )).result
+    assert report["blockers"] == []
+    assert [w["code"] for w in report["warnings"]] == ["producer_not_running"]
+
+
+async def test_abended_process_warns_with_its_last_error(server):
+    report = (await server.execute_tool(
+        "check_start_readiness",
+        {"deployment": "prod", "process_type": "replicat", "process_name": "REP1"},
+    )).result
+    assert report["status"] == "abended"
+    assert "OGG-01296" in report["warnings"][0]["message"]
+
+
+async def test_unknown_process_is_blocked(server):
+    outcome = await server.execute_tool(
+        "start_extract", {"deployment": "prod", "extract_name": "GHOST"}
+    )
+    assert outcome.status == "blocked"
+    assert outcome.result["prestart"]["blocked"] == ["GHOST"]
+
+
+async def test_one_blocked_process_stops_the_whole_batch(server):
+    fake = server.fakes["prod"]
+    _initial_load(fake, exit_code=1)
+    outcome = await server.execute_tool(
+        "batch_start_processes",
+        {"deployment": "prod", "process_names": ["REP1", "ILR"], "process_type": "replicat"},
+    )
+    assert outcome.status == "blocked"
+    assert outcome.result["prestart"]["blocked"] == ["ILR"]
+    assert fake.writes == []
+
+
+async def test_restart_runs_the_checks_before_stopping(server):
+    fake = server.fakes["prod"]
+    _initial_load(fake, exit_code=1)
+    fake.processes["replicats/ILR"]["status"] = "running"
+    outcome = await server.execute_tool(
+        "restart_process",
+        {"deployment": "prod", "process_name": "ILR", "process_type": "replicat"},
+    )
+    assert outcome.status == "blocked"
+    assert fake.writes == []
+
+
+async def test_dry_run_reports_blockers_without_refusing(server):
+    fake = server.fakes["prod"]
+    _initial_load(fake, exit_code=1)
+    outcome = await server.execute_tool("start_replicat", {**START_ILR, "dry_run": True})
+    assert outcome.ok
+    assert outcome.result["prestart"]["blocked"] == ["ILR"]
+    assert fake.writes == []
+
+
+async def test_warn_mode_reports_and_starts(tmp_path, fresh_audit):
+    server = make_server(tmp_path, fresh_audit, prestart_checks="warn")
+    fake = server.fakes["prod"]
+    _initial_load(fake, exit_code=1)
+    outcome = await server.execute_tool("start_replicat", START_ILR)
+    assert outcome.ok
+    assert outcome.result["prestart"]["blocked"] == ["ILR"]
+    assert fake.writes
+    findings = (await server.execute_tool("get_server_posture", {})).result["findings"]
+    assert "Pre-start checks are warn, not enforced" in findings
+
+
+async def test_off_mode_skips_the_checks(tmp_path, fresh_audit):
+    server = make_server(tmp_path, fresh_audit, prestart_checks="off")
+    _initial_load(server.fakes["prod"], exit_code=1)
+    outcome = await server.execute_tool("start_replicat", START_ILR)
+    assert outcome.ok
+    assert "prestart" not in outcome.result
+
+
+def test_invalid_prestart_mode_rejected():
+    with pytest.raises(ValueError, match="prestart_checks"):
+        Config(deployments=[_dep("a")], prestart_checks="maybe")
+
+
+# ---- Distribution paths and data streams ---------------------------------------
+
+async def test_distribution_tools(server):
+    fake = server.fakes["prod"]
+    fake.distribution["sources"] = {"items": [{"name": "DP1"}]}
+    fake.distribution["sources/DP1"] = {"status": "running", "target": {"uri": "ogg://t"}}
+    fake.distribution["sources/DP1/checkpoints"] = {"current": {"sequence": 3}}
+    args = {"deployment": "prod", "path_name": "DP1"}
+
+    listing = await server.execute_tool("list_distribution_paths", {"deployment": "prod"})
+    detail = await server.execute_tool("get_distribution_path", args)
+    checkpoints = await server.execute_tool("get_distribution_path_checkpoints", args)
+
+    assert listing.result["response"]["items"] == [{"name": "DP1"}]
+    assert detail.result["response"]["status"] == "running"
+    assert checkpoints.result["current"]["sequence"] == 3
+
+
+async def test_data_stream_tools(server):
+    fake = server.fakes["prod"]
+    fake.distribution["stream"] = {"items": [{"name": "S1"}]}
+    fake.distribution["stream/S1/info"] = {"name": "S1", "source": {"trail": "ea"}}
+    fake.yaml = "asyncapi: 2.6.0\n"
+    args = {"deployment": "prod", "stream_name": "S1"}
+
+    listing = await server.execute_tool("list_data_streams", {"deployment": "prod"})
+    info = await server.execute_tool("get_data_stream", args)
+    definition = await server.execute_tool("get_data_stream_definition", args)
+
+    assert listing.result["response"]["items"] == [{"name": "S1"}]
+    assert info.result["name"] == "S1"
+    assert definition.result == {"content": "asyncapi: 2.6.0\n"}
+
+
+async def test_distribution_tools_are_read_only_and_scoped(server):
+    tools = {t.name: t for t in all_tools(enable_metrics=True, read_only=True)}
+    for name in ("list_distribution_paths", "get_data_stream", "check_start_readiness"):
+        assert tools[name].annotations.readOnlyHint is True
+    scoped = Principal("sam", Role.VIEWER, frozenset({"test"}))
+    outcome = await server.execute_tool(
+        "list_data_streams", {"deployment": "prod"}, principal=scoped
+    )
+    assert outcome.result["code"] == "deployment_forbidden"
+
+
+async def test_stream_name_is_validated(server):
+    outcome = await server.execute_tool(
+        "get_data_stream", {"deployment": "prod", "stream_name": "../../x"}
+    )
+    assert outcome.status == "error"
+
+
 # ---- Telemetry --------------------------------------------------------------
 
 def test_prometheus_output():
@@ -718,6 +1069,20 @@ def test_rest_status_mapping(rest):
     invalid = rest.post("/api/tools/execute", json={"name": "list_extracts"}, headers=headers)
     assert unknown.status_code == 404
     assert invalid.status_code == 400
+
+
+def test_rest_blocked_start_is_a_conflict(rest, server):
+    _initial_load(server.fakes["test"], exit_code=1)
+    response = rest.post(
+        "/api/tools/execute",
+        json={
+            "name": "start_replicat",
+            "arguments": {"deployment": "test", "replicat_name": "ILR"},
+        },
+        headers=_bearer("operator-token"),
+    )
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "prestart_check_failed"
 
 
 def test_rest_metrics_and_ready(rest):

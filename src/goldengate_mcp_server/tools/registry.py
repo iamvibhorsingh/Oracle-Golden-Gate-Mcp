@@ -38,6 +38,14 @@ DESTRUCTIVE_TOOLS: Set[str] = {
     "batch_stop_processes",
 }
 
+# Write tools that start processes, so pre-start checks apply.
+START_TOOLS: Set[str] = {
+    "start_extract",
+    "start_replicat",
+    "restart_process",
+    "batch_start_processes",
+}
+
 # Write tools whose second call acts again rather than changing nothing.
 NON_IDEMPOTENT_TOOLS: Set[str] = {"restart_process"}
 
