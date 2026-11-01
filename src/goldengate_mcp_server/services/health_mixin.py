@@ -5,6 +5,9 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Dict
 
+from ..goldengate_client import process_states
+from ..redaction import redact_error_text
+
 
 class HealthMixin:
     """Requires: _get_client."""
@@ -21,59 +24,31 @@ class HealthMixin:
             "issues": [],
         }
 
-        try:
-            extracts_data = await client.list_extracts()
-            for extract in extracts_data.get("items", []):
-                extract_name = extract.get("name")
-                status = extract.get("status")
+        for process_type, group, label, get_lag in (
+            ("extract", "extracts", "Extract", client.get_extract_lag),
+            ("replicat", "replicats", "Replicat", client.get_replicat_lag),
+        ):
+            try:
+                for info in await process_states(client, process_type):
+                    status = info["status"]
 
-                extract_info: Dict[str, Any] = {
-                    "name": extract_name,
-                    "status": status,
-                }
+                    if status == "running":
+                        try:
+                            info["lag"] = await get_lag(info["name"])
+                        except Exception:
+                            pass
 
-                if status == "running":
-                    try:
-                        lag_data = await client.get_extract_lag(extract_name)
-                        extract_info["lag"] = lag_data
-                    except Exception:
-                        pass
+                    health_data[group].append(info)
 
-                health_data["extracts"].append(extract_info)
-
-                if status not in ["running", "stopped"]:
-                    health_data["issues"].append(f"Extract {extract_name} is {status}")
-                    health_data["overall_status"] = "degraded"
-        except Exception as e:
-            health_data["issues"].append(f"Failed to get extracts: {str(e)}")
-            health_data["overall_status"] = "error"
-
-        try:
-            replicats_data = await client.list_replicats()
-            for replicat in replicats_data.get("items", []):
-                replicat_name = replicat.get("name")
-                status = replicat.get("status")
-
-                replicat_info: Dict[str, Any] = {
-                    "name": replicat_name,
-                    "status": status,
-                }
-
-                if status == "running":
-                    try:
-                        lag_data = await client.get_replicat_lag(replicat_name)
-                        replicat_info["lag"] = lag_data
-                    except Exception:
-                        pass
-
-                health_data["replicats"].append(replicat_info)
-
-                if status not in ["running", "stopped"]:
-                    health_data["issues"].append(f"Replicat {replicat_name} is {status}")
-                    health_data["overall_status"] = "degraded"
-        except Exception as e:
-            health_data["issues"].append(f"Failed to get replicats: {str(e)}")
-            health_data["overall_status"] = "error"
+                    if status not in ["running", "stopped", "starting"]:
+                        health_data["issues"].append(f"{label} {info['name']} is {status}")
+                        if health_data["overall_status"] != "error":
+                            health_data["overall_status"] = "degraded"
+            except Exception as e:
+                health_data["issues"].append(
+                    redact_error_text(f"Failed to get {group}: {e}")
+                )
+                health_data["overall_status"] = "error"
 
         return health_data
 

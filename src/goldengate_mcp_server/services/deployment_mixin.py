@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any, Dict
+
+from ..redaction import redact_error_text
 
 logger = logging.getLogger(__name__)
 
@@ -14,25 +17,26 @@ class DeploymentMixin:
     clients: Dict[str, Any]
 
     async def _list_deployments(self) -> Dict[str, Any]:
-        deployments = []
-        for name, client in self.clients.items():
+        async def probe(name: str) -> Dict[str, Any]:
+            client = self.clients[name]
             try:
                 info = await client.get_deployment_info()
-                deployments.append({
+                return {
                     "name": name,
                     "status": "connected",
                     "version": info.get("version", "unknown"),
                     "base_url": client.base_url,
-                })
+                }
             except Exception as e:
-                deployments.append({
+                return {
                     "name": name,
                     "status": "error",
-                    "error": str(e),
+                    "error": redact_error_text(str(e)),
                     "base_url": client.base_url,
-                })
+                }
 
-        return {"deployments": deployments}
+        names = self._visible_deployments()
+        return {"deployments": list(await asyncio.gather(*(probe(n) for n in names)))}
 
     async def _get_deployment_info(self, deployment: str) -> Dict[str, Any]:
         client = self._get_client(deployment)

@@ -11,10 +11,13 @@ chain. Record ``head_hash`` from a verification somewhere the writer cannot modi
 both.
 """
 
+import argparse
 import hashlib
 import json
 import logging
-from dataclasses import dataclass
+import sys
+from collections import deque
+from dataclasses import asdict, dataclass
 from datetime import datetime
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
@@ -246,7 +249,8 @@ class AuditLogger:
         arguments: Any,
         timestamp: Optional[datetime] = None,
         user: Optional[str] = None,
-        session_id: Optional[str] = None
+        session_id: Optional[str] = None,
+        context: Optional[Dict[str, Any]] = None,
     ):
         if timestamp is None:
             timestamp = datetime.utcnow()
@@ -264,6 +268,8 @@ class AuditLogger:
                 log_entry["user"] = user
             if session_id:
                 log_entry["session_id"] = session_id
+            if context:
+                log_entry.update(context)
 
             self._write(log_entry)
 
@@ -274,7 +280,8 @@ class AuditLogger:
         timestamp: Optional[datetime] = None,
         error: Optional[str] = None,
         user: Optional[str] = None,
-        session_id: Optional[str] = None
+        session_id: Optional[str] = None,
+        context: Optional[Dict[str, Any]] = None,
     ):
         if timestamp is None:
             timestamp = datetime.utcnow()
@@ -293,6 +300,8 @@ class AuditLogger:
                 log_entry["user"] = user
             if session_id:
                 log_entry["session_id"] = session_id
+            if context:
+                log_entry.update(context)
 
             self._write(log_entry)
 
@@ -381,10 +390,13 @@ class AuditLogger:
         end_time: Optional[datetime] = None,
         action: Optional[str] = None,
         event_type: Optional[str] = None,
-        success: Optional[bool] = None
+        success: Optional[bool] = None,
+        user: Optional[str] = None,
+        deployment: Optional[str] = None,
+        limit: Optional[int] = None,
     ) -> list:
         """
-        Search audit logs with filters.
+        Search audit logs, rotated files included, with filters.
 
         Args:
             start_time: Filter entries after this time
@@ -392,77 +404,78 @@ class AuditLogger:
             action: Filter by action name
             event_type: Filter by event type
             success: Filter by success status
+            user: Filter by caller
+            deployment: Filter by deployment
+            limit: Keep only the newest N matches
 
         Returns:
-            List of matching log entries
+            List of matching log entries, oldest first
         """
-        matching_entries = []
+        matching_entries: deque = deque(maxlen=limit)
 
-        try:
-            with open(self.log_path, 'r') as f:
+        for file in _log_files(self.log_path):
+            with open(file, "r", encoding="utf-8", errors="replace") as f:
                 for line in f:
-                    try:
-                        # Parse log entry
-                        entry = json.loads(line.split(' - ', 1)[1])
-
-                        # Apply filters
-                        if start_time:
-                            entry_time = datetime.fromisoformat(entry["timestamp"])
-                            if entry_time < start_time:
-                                continue
-
-                        if end_time:
-                            entry_time = datetime.fromisoformat(entry["timestamp"])
-                            if entry_time > end_time:
-                                continue
-
-                        if action and entry.get("action") != action:
-                            continue
-
-                        if event_type and entry.get("event_type") != event_type:
-                            continue
-
-                        if success is not None and entry.get("success") != success:
-                            continue
-
-                        matching_entries.append(entry)
-
-                    except (json.JSONDecodeError, IndexError, KeyError):
+                    entry = _parse_line(line)
+                    if entry is None:
                         continue
 
-        except FileNotFoundError:
-            pass
+                    if start_time or end_time:
+                        try:
+                            entry_time = datetime.fromisoformat(entry["timestamp"])
+                        except (KeyError, TypeError, ValueError):
+                            continue
+                        if start_time and entry_time < start_time:
+                            continue
+                        if end_time and entry_time > end_time:
+                            continue
 
-        return matching_entries
+                    if action and entry.get("action") != action:
+                        continue
+
+                    if event_type and entry.get("event_type") != event_type:
+                        continue
+
+                    if success is not None and entry.get("success") != success:
+                        continue
+
+                    if user and entry.get("user") != user:
+                        continue
+
+                    if deployment and entry.get("deployment") != deployment:
+                        continue
+
+                    matching_entries.append(entry)
+
+        return list(matching_entries)
 
 
-# Example usage for testing
+def main() -> None:
+    """``goldengate-audit-verify``: exit 0 if the chain is intact, 1 if not (for cron/CI)."""
+    parser = argparse.ArgumentParser(description="Verify a GoldenGate MCP audit log chain")
+    parser.add_argument("log_path", nargs="?", default="./logs/audit.log")
+    parser.add_argument(
+        "--contains",
+        metavar="HASH",
+        help="Also fail unless this head hash, pinned from an earlier run, is still in the log",
+    )
+    args = parser.parse_args()
+
+    result = verify_audit_log(args.log_path)
+    print(json.dumps(asdict(result), indent=2))
+
+    if result.ok and args.contains:
+        pinned = any(
+            (_parse_line(line) or {}).get("hash") == args.contains
+            for file in _log_files(Path(args.log_path))
+            for line in open(file, "r", encoding="utf-8", errors="replace")
+        )
+        if not pinned:
+            print(f"Pinned hash {args.contains} not found", file=sys.stderr)
+            sys.exit(1)
+
+    sys.exit(0 if result.ok else 1)
+
+
 if __name__ == "__main__":
-    # Create test logger
-    logger = AuditLogger("./test_audit.log")
-
-    # Log some test events
-    logger.log_action(
-        action="list_extracts",
-        arguments={"deployment": "gg21_prod"}
-    )
-
-    logger.log_result(
-        action="list_extracts",
-        success=True
-    )
-
-    logger.log_security_event(
-        event_type="write_operation_blocked",
-        details={
-            "operation": "start_extract",
-            "reason": "read_only_mode"
-        },
-        severity="warning"
-    )
-
-    # Get recent entries
-    recent = logger.get_recent_entries(count=10)
-    print(f"Recent entries: {len(recent)}")
-    for entry in recent:
-        print(json.dumps(entry, indent=2))
+    main()

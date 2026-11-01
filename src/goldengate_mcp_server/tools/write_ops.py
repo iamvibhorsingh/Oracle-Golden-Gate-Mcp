@@ -59,6 +59,31 @@ WRITE_TOOLS: List[Tool] = [
         },
     ),
     Tool(
+        name="restart_process",
+        description=(
+            "Stop one Extract or Replicat, wait until it has stopped, start it and wait until "
+            "it runs (requires write). A process that will not stop is not started again."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "deployment": {"type": "string", "description": "Name of the deployment"},
+                "process_name": {"type": "string", "description": "Name of the process"},
+                "process_type": {
+                    "type": "string",
+                    "enum": ["extract", "replicat"],
+                    "description": "Type of process",
+                },
+                "timeout_seconds": {
+                    "type": "number",
+                    "description": "Seconds to wait for each transition (default 120)",
+                    "maximum": 600,
+                },
+            },
+            "required": ["deployment", "process_name", "process_type"],
+        },
+    ),
+    Tool(
         name="batch_start_processes",
         description="Start multiple Extract or Replicat processes (requires write).",
         inputSchema={
@@ -102,6 +127,20 @@ WRITE_TOOLS: List[Tool] = [
     ),
 ]
 
+_GOVERNANCE_PROPERTIES = {
+    "dry_run": {
+        "type": "boolean",
+        "description": "Report current status and what would change, without changing anything",
+    },
+    "change_ticket": {
+        "type": "string",
+        "description": "Approved change reference (required on protected deployments)",
+    },
+}
+
+for _tool in WRITE_TOOLS:
+    _tool.inputSchema["properties"].update(_GOVERNANCE_PROPERTIES)
+
 ToolHandler = Callable[[Any], Awaitable[Any]]
 
 
@@ -118,6 +157,9 @@ def register_write_handlers(dispatch: Dict[str, ToolHandler], app: Any) -> None:
     async def stop_replicat(arguments: Any):
         return await app._handle_write_operation("stop_replicat", arguments)
 
+    async def restart_process(arguments: Any):
+        return await app._handle_write_operation("restart_process", arguments)
+
     async def batch_start_processes(arguments: Any):
         return await app._batch_start_processes(
             arguments["deployment"], arguments["process_names"], arguments["process_type"]
@@ -132,5 +174,6 @@ def register_write_handlers(dispatch: Dict[str, ToolHandler], app: Any) -> None:
     dispatch["stop_extract"] = stop_extract
     dispatch["start_replicat"] = start_replicat
     dispatch["stop_replicat"] = stop_replicat
+    dispatch["restart_process"] = restart_process
     dispatch["batch_start_processes"] = batch_start_processes
     dispatch["batch_stop_processes"] = batch_stop_processes

@@ -267,18 +267,18 @@ class Config(BaseModel):
         cache_ttl_seconds = int(os.getenv("GG_CACHE_TTL_SECONDS", "30"))
         max_concurrent_requests = int(os.getenv("GG_MAX_CONCURRENT_REQUESTS", "10"))
         requests_per_second = int(os.getenv("GG_REQUESTS_PER_SECOND", "20"))
-        governance = dict(
-            backup_dir=os.getenv("GG_BACKUP_DIR", "./backups"),
-            write_deployments=env_list("GG_WRITE_DEPLOYMENTS"),
-            protected_deployments=env_list("GG_PROTECTED_DEPLOYMENTS"),
-            disabled_tools=env_list("GG_DISABLED_TOOLS"),
-            max_batch_size=int(os.getenv("GG_MAX_BATCH_SIZE", "25")),
-            change_ticket_pattern=os.getenv(
+        governance = {
+            "backup_dir": os.getenv("GG_BACKUP_DIR", "./backups"),
+            "write_deployments": env_list("GG_WRITE_DEPLOYMENTS"),
+            "protected_deployments": env_list("GG_PROTECTED_DEPLOYMENTS"),
+            "disabled_tools": env_list("GG_DISABLED_TOOLS"),
+            "max_batch_size": int(os.getenv("GG_MAX_BATCH_SIZE", "25")),
+            "change_ticket_pattern": os.getenv(
                 "GG_CHANGE_TICKET_PATTERN", DEFAULT_CHANGE_TICKET_PATTERN
             ),
-            log_level=os.getenv("GG_LOG_LEVEL", "INFO").upper(),
-            log_format=os.getenv("GG_LOG_FORMAT", "text").lower(),
-        )
+            "log_level": os.getenv("GG_LOG_LEVEL", "INFO").upper(),
+            "log_format": os.getenv("GG_LOG_FORMAT", "text").lower(),
+        }
 
         # Load deployments
         deployments = []
