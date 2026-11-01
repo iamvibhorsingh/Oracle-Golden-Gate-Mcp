@@ -10,7 +10,9 @@ from .config_mgmt import CONFIG_TOOLS, register_config_handlers
 from .deployment import DEPLOYMENT_TOOLS, register_deployment_handlers
 from .diagnostics_tools import DIAGNOSTICS_TOOLS, register_diagnostics_handlers
 from .extract import EXTRACT_TOOLS, register_extract_handlers
+from .governance import GOVERNANCE_TOOLS, register_governance_handlers
 from .health import HEALTH_TOOLS, register_health_handlers
+from .insights import INSIGHTS_TOOLS, register_insights_handlers
 from .operational import OPERATIONAL_TOOLS, register_operational_handlers
 from .replicat import REPLICAT_TOOLS, register_replicat_handlers
 from .write_ops import WRITE_TOOLS, register_write_handlers
@@ -29,7 +31,21 @@ METRICS_DEPENDENT_TOOLS: Set[str] = {
 WRITE_TOOL_NAMES: Set[str] = {t.name for t in WRITE_TOOLS}
 
 # Write tools that interrupt replication.
-DESTRUCTIVE_TOOLS: Set[str] = {"stop_extract", "stop_replicat", "batch_stop_processes"}
+DESTRUCTIVE_TOOLS: Set[str] = {
+    "stop_extract",
+    "stop_replicat",
+    "restart_process",
+    "batch_stop_processes",
+}
+
+# Write tools whose second call acts again rather than changing nothing.
+NON_IDEMPOTENT_TOOLS: Set[str] = {"restart_process"}
+
+# Write to the MCP host's disk only, so they stay available in read-only mode.
+LOCAL_WRITE_TOOLS: Set[str] = {"save_config_snapshot"}
+
+# Tools limited to the admin role (the audit trail and the server's security settings).
+ADMIN_TOOLS: Set[str] = {t.name for t in GOVERNANCE_TOOLS}
 
 
 def _annotate(tool: Tool) -> Tool:
@@ -38,9 +54,11 @@ def _annotate(tool: Tool) -> Tool:
             readOnlyHint=False,
             destructiveHint=tool.name in DESTRUCTIVE_TOOLS,
             # Setting a process to running/stopped twice has the same effect as once.
-            idempotentHint=True,
+            idempotentHint=tool.name not in NON_IDEMPOTENT_TOOLS,
             openWorldHint=True,
         )
+    elif tool.name in LOCAL_WRITE_TOOLS:
+        annotations = ToolAnnotations(readOnlyHint=False, destructiveHint=False, openWorldHint=True)
     else:
         annotations = ToolAnnotations(readOnlyHint=True, openWorldHint=True)
     return tool.model_copy(update={"annotations": annotations})
@@ -60,7 +78,9 @@ def all_tools(*, enable_metrics: bool = True, read_only: bool = False) -> List[T
         *WRITE_TOOLS,
         *DIAGNOSTICS_TOOLS,
         *OPERATIONAL_TOOLS,
+        *INSIGHTS_TOOLS,
         *CONFIG_TOOLS,
+        *GOVERNANCE_TOOLS,
     ]
     if not enable_metrics:
         tools = [t for t in tools if t.name not in METRICS_DEPENDENT_TOOLS]
@@ -79,7 +99,9 @@ def build_dispatch(app: Any, *, enable_metrics: bool = True) -> Dict[str, ToolHa
     register_write_handlers(dispatch, app)
     register_diagnostics_handlers(dispatch, app)
     register_operational_handlers(dispatch, app)
+    register_insights_handlers(dispatch, app)
     register_config_handlers(dispatch, app)
+    register_governance_handlers(dispatch, app)
     if not enable_metrics:
         for name in METRICS_DEPENDENT_TOOLS:
             dispatch.pop(name, None)

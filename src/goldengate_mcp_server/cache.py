@@ -86,16 +86,21 @@ class RateLimiter:
         await self.semaphore.acquire()
 
         # Limit requests per second
-        async with self.lock:
-            now = datetime.utcnow()
-            time_since_last = (now - self.last_request_time).total_seconds()
-            min_interval = 1.0 / self.rps
+        try:
+            async with self.lock:
+                now = datetime.utcnow()
+                time_since_last = (now - self.last_request_time).total_seconds()
+                min_interval = 1.0 / self.rps
 
-            if time_since_last < min_interval:
-                sleep_time = min_interval - time_since_last
-                await asyncio.sleep(sleep_time)
+                if time_since_last < min_interval:
+                    sleep_time = min_interval - time_since_last
+                    await asyncio.sleep(sleep_time)
 
-            self.last_request_time = datetime.utcnow()
+                self.last_request_time = datetime.utcnow()
+        except BaseException:
+            # Cancelled while pacing: the caller never reaches release().
+            self.semaphore.release()
+            raise
 
     def release(self):
         """Release rate limit token."""

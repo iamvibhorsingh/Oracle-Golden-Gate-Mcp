@@ -7,6 +7,8 @@ import logging
 import time
 from typing import Any, Dict, Optional
 
+from ..goldengate_client import process_states
+
 logger = logging.getLogger(__name__)
 
 
@@ -23,8 +25,7 @@ class MetricsCollectionMixin:
         if self.metrics_store is None:
             return
         try:
-            extracts = await client.list_extracts()
-            for extract in extracts.get("items", []):
+            for extract in await process_states(client, "extract"):
                 extract_name = extract.get("name")
                 if extract.get("status") == "running":
                     try:
@@ -50,8 +51,7 @@ class MetricsCollectionMixin:
             )
 
         try:
-            replicats = await client.list_replicats()
-            for replicat in replicats.get("items", []):
+            for replicat in await process_states(client, "replicat"):
                 replicat_name = replicat.get("name")
                 if replicat.get("status") == "running":
                     try:

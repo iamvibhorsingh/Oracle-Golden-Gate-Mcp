@@ -10,8 +10,8 @@ CONFIG_TOOLS: List[Tool] = [
     Tool(
         name="backup_deployment_config",
         description=(
-            "JSON-serializable backup of all process configs in the MCP response only"
-            "—never writes secrets to the backups/ folder."
+            "JSON-serializable backup of all process configs in the response only. "
+            "Use save_config_snapshot to keep one for later drift checks."
         ),
         inputSchema={
             "type": "object",
@@ -41,8 +41,9 @@ CONFIG_TOOLS: List[Tool] = [
     Tool(
         name="compare_deployment_configs",
         description=(
-            "Diff current backup_all_configs snapshot vs optional on-disk backup_file JSON. "
-            "Without backup_file returns current snapshot and a hint to supply a file path."
+            "Drift check: diff the live config against a saved snapshot, with a line diff per "
+            "modified process. backup_file is a name from list_config_backups. Without it, "
+            "returns the current config."
         ),
         inputSchema={
             "type": "object",
@@ -50,8 +51,33 @@ CONFIG_TOOLS: List[Tool] = [
                 "deployment": {"type": "string", "description": "Name of the deployment"},
                 "backup_file": {
                     "type": "string",
-                    "description": "Path to backup JSON to compare against (optional)",
+                    "description": "Snapshot inside the backup directory (optional)",
                 },
+            },
+            "required": ["deployment"],
+        },
+    ),
+    Tool(
+        name="save_config_snapshot",
+        description=(
+            "Save a redacted config snapshot to the server's backup directory for later "
+            "compare_deployment_configs calls. Changes nothing in GoldenGate."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "deployment": {"type": "string", "description": "Name of the deployment"},
+            },
+            "required": ["deployment"],
+        },
+    ),
+    Tool(
+        name="list_config_backups",
+        description="Saved config snapshots for a deployment, oldest first.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "deployment": {"type": "string", "description": "Name of the deployment"},
             },
             "required": ["deployment"],
         },
@@ -75,6 +101,14 @@ def register_config_handlers(dispatch: Dict[str, ToolHandler], app: Any) -> None
             arguments["deployment"], arguments.get("backup_file")
         )
 
+    async def save_config_snapshot(arguments: Any):
+        return await app._save_config_snapshot(arguments["deployment"])
+
+    async def list_config_backups(arguments: Any):
+        return await app._list_config_backups(arguments["deployment"])
+
+    dispatch["save_config_snapshot"] = save_config_snapshot
+    dispatch["list_config_backups"] = list_config_backups
     dispatch["backup_deployment_config"] = backup_deployment_config
     dispatch["get_process_config"] = get_process_config
     dispatch["compare_deployment_configs"] = compare_deployment_configs

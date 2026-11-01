@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "goldengate-mcp-server"
-version = "1.1.0"
+version = "1.2.0"
 description = "Model Context Protocol server for Oracle GoldenGate management and monitoring"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -41,7 +41,7 @@ dev = [
     "pytest-asyncio>=0.21.0",
     "pytest-cov>=4.1.0",
     "black>=23.0.0",
-    "ruff>=0.1.0",
+    "ruff>=0.1.0,<0.18",
     "mypy>=1.0.0",
 ]
 database = [
@@ -55,6 +55,7 @@ azure = [
 [project.scripts]
 goldengate-mcp-server = "goldengate_mcp_server.server:main"
 goldengate-rest-server = "goldengate_mcp_server.rest_api:main"
+goldengate-audit-verify = "goldengate_mcp_server.audit:main"
 
 [project.urls]
 Homepage = "https://github.com/iamvibhorsingh/Oracle-Golden-Gate-Mcp"

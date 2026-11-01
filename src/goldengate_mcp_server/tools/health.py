@@ -45,7 +45,8 @@ HEALTH_TOOLS: List[Tool] = [
         name="check_process_errors",
         description=(
             "Recent errors/warnings for one process from the REST API (has_errors, messages). "
-            "Use after seeing non-running status or high severity."
+            "Use after seeing non-running status or high severity; get_process_report has the "
+            "OGG-nnnnn errors for an abended process."
         ),
         inputSchema={
             "type": "object",

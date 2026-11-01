@@ -14,9 +14,10 @@ Security Features:
 """
 
 import asyncio
+import getpass
 import logging
+import os
 import time
-from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from dotenv import load_dotenv
@@ -29,18 +30,22 @@ from .database_monitor import DatabaseMonitor, create_db_config_from_env
 from .diagnostics import DiagnosticsEngine
 from .goldengate_client import GoldenGateClient
 from .metrics_store import MetricsStore
-from .redaction import redact_error_text
+from .policy import Policy, Principal
 from .services import (
     ConfigToolsMixin,
     DeploymentMixin,
     DiagnosticsMixin,
+    GatewayMixin,
+    GovernanceMixin,
     HealthMixin,
+    InsightsMixin,
     MetricsCollectionMixin,
     OperationalMixin,
     ProcessReadMixin,
     ServerCoreMixin,
     WriteMixin,
 )
+from .telemetry import Telemetry, configure_logging
 from .tools import all_tools, build_dispatch
 
 logging.basicConfig(
@@ -50,7 +55,19 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+def _default_principal() -> Principal:
+    """Who a stdio client is: GG_MCP_PRINCIPAL, else the OS account running the server."""
+    name = os.getenv("GG_MCP_PRINCIPAL")
+    if not name:
+        try:
+            name = getpass.getuser()
+        except Exception:
+            name = "unknown"
+    return Principal(name=name)
+
+
 class GoldenGateMCPServer(
+    GatewayMixin,
     ServerCoreMixin,
     DeploymentMixin,
     ProcessReadMixin,
@@ -60,6 +77,8 @@ class GoldenGateMCPServer(
     DiagnosticsMixin,
     OperationalMixin,
     ConfigToolsMixin,
+    InsightsMixin,
+    GovernanceMixin,
 ):
     def __init__(self, config: Config):
         self.config = config
@@ -70,6 +89,10 @@ class GoldenGateMCPServer(
             max_bytes=config.audit_log_max_bytes,
             backup_count=config.audit_log_backup_count,
         )
+
+        self.policy = Policy(config)
+        self.telemetry = Telemetry()
+        self.default_principal = _default_principal()
 
         self._enable_metrics = config.enable_metrics
 
@@ -127,15 +150,26 @@ class GoldenGateMCPServer(
                     e,
                 )
 
-    def list_tool_definitions(self) -> List[Tool]:
-        """Tools visible to clients under the current metrics / read-only settings."""
-        return all_tools(
+    def list_tool_definitions(self, principal: Optional[Principal] = None) -> List[Tool]:
+        """Tools ``principal`` can use under the metrics, read-only and policy settings."""
+        tools = all_tools(
             enable_metrics=self._enable_metrics,
             read_only=self.config.read_only,
+        )
+        return self.policy.visible(tools, principal or self.default_principal)
+
+    def render_metrics(self) -> str:
+        """Prometheus text for this process."""
+        return self.telemetry.render(
+            deployments=len(self.clients),
+            cache_stats=[(name, c.cache.stats()) for name, c in self.clients.items()],
         )
 
     def _register_handlers(self) -> None:
         self._tool_handlers = build_dispatch(self, enable_metrics=self._enable_metrics)
+        self._tool_schemas = {
+            t.name: t for t in all_tools(enable_metrics=self._enable_metrics)
+        }
 
         @self.server.list_tools()
         async def list_tools() -> List[Tool]:
@@ -143,33 +177,8 @@ class GoldenGateMCPServer(
 
         @self.server.call_tool()
         async def call_tool(name: str, arguments: Any) -> List[TextContent]:
-            self.audit_logger.log_action(
-                action=name,
-                arguments=arguments,
-                timestamp=datetime.utcnow(),
-            )
-            try:
-                handler = self._tool_handlers.get(name)
-                if handler:
-                    result = await handler(arguments)
-                else:
-                    result = {"error": f"Unknown tool: {name}"}
-
-                self.audit_logger.log_result(
-                    action=name,
-                    success=not isinstance(result, dict) or "error" not in result,
-                    timestamp=datetime.utcnow(),
-                )
-                return [TextContent(type="text", text=self._format_result(result))]
-            except Exception as e:
-                logger.error("Error executing tool %s: %s", name, e, exc_info=True)
-                safe_err = redact_error_text(str(e))
-                self.audit_logger.log_result(
-                    action=name,
-                    success=False,
-                    error=safe_err,
-                    timestamp=datetime.utcnow(),
-                )
+            outcome = await self.execute_tool(name, arguments)
+            if outcome.status == "error":
                 dep = (
                     arguments.get("deployment")
                     if isinstance(arguments, dict)
@@ -177,11 +186,12 @@ class GoldenGateMCPServer(
                 )
                 dep_phrase = f"'{dep}'" if dep else "from your request"
                 hint = (
-                    f"Error executing {name}: {safe_err}. "
+                    f"Error executing {name}: {outcome.result}. "
                     f"Suggested next step: verify deployment {dep_phrase} is configured "
                     "and reachable via list_deployments, or retry in ~30 s if transient."
                 )
                 return [TextContent(type="text", text=hint)]
+            return [TextContent(type="text", text=self._format_result(outcome.result))]
 
     async def shutdown(self) -> None:
         logger.info("Shutting down GoldenGate MCP Server...")
@@ -226,12 +236,17 @@ class GoldenGateMCPServer(
             await self.shutdown()
 
 
-async def main() -> None:
+async def run_server() -> None:
     load_dotenv()
     config = Config.from_env()
+    configure_logging(config.log_level, config.log_format)
     server = GoldenGateMCPServer(config)
     await server.run()
 
 
+def main() -> None:
+    asyncio.run(run_server())
+
+
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()

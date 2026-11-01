@@ -13,6 +13,7 @@ from goldengate_mcp_server.audit import AuditLogger
 from goldengate_mcp_server.config import Config, DeploymentConfig
 from goldengate_mcp_server.database_monitor import DatabaseMonitor
 from goldengate_mcp_server.goldengate_client import GoldenGateClient
+from goldengate_mcp_server.services import ToolOutcome
 from goldengate_mcp_server.tools import WRITE_TOOL_NAMES, all_tools
 
 
@@ -215,7 +216,7 @@ def rest(monkeypatch):
 
     fake = MagicMock()
     fake.list_tool_definitions.return_value = all_tools(enable_metrics=False, read_only=True)
-    fake._tool_handlers = {"list_extracts": AsyncMock(return_value={"items": []})}
+    fake.execute_tool = AsyncMock(return_value=ToolOutcome("ok", {"items": []}, "cid"))
     monkeypatch.setattr(rest_api, "mcp_server", fake)
     # No context manager: skip the startup hook that builds a real server.
     return TestClient(rest_api.app)

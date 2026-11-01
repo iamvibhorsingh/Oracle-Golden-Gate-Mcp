@@ -13,10 +13,29 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.12"
       - name: Install
-        run: pip install -e ".[dev]"
+        run: pip install -e ".[dev,azure]"
       - name: Ruff
-        run: ruff check src tests
+        run: ruff check src tests scripts
       - name: Pytest
         run: pytest tests/ -q -m "not requires_gg"
+
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: pip install ".[azure,database]" pip-audit
+      - name: Audit dependencies
+        run: pip-audit --skip-editable
+
+  image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build image
+        run: docker build -t goldengate-mcp-server .
