@@ -31,10 +31,6 @@ _EXPLICIT_SENSITIVE_KEYS: frozenset[str] = frozenset(
 
 _REDACT_PLACEHOLDER = "***REDACTED***"
 
-_USERID_WITH_PASSWORD = re.compile(
-    r"(?i)^\s*userid\s+.+,.*\bpassword\b",
-)
-
 
 def redact_parameter_file_text(text: str) -> str:
     """Redact obvious credential lines from a parameter file or similar blob."""
@@ -42,20 +38,15 @@ def redact_parameter_file_text(text: str) -> str:
         return text
     out: list[str] = []
     for line in text.splitlines():
-        stripped = line.lstrip()
-        if stripped.startswith(("--", "#")):
-            out.append(line)
-            continue
-        low = stripped.lower()
+        # Comments are checked too: commented-out USERID lines often keep a real password.
+        low = line.lstrip().lstrip("-#").lstrip().lower()
         if (
-            low.startswith("password ")
-            or low.startswith("password\t")
+            "password" in low
+            or "passwd" in low
             or "encryptkey" in low
             or "decryptkey" in low
             or low.startswith("wallet ")
             or low.startswith("wallet\t")
-            or _USERID_WITH_PASSWORD.search(line)
-            or re.search(r"(?i)\bpassword\s*=", line)
         ):
             out.append(f"{_REDACT_PLACEHOLDER} (credential line removed)")
         else:
@@ -67,7 +58,17 @@ def _key_suggests_param_blob(key: str) -> bool:
     k = key.lower().replace("-", "_")
     return any(
         frag in k
-        for frag in ("parameter", "param_file", "file_content", "contents", "content", "prmf")
+        for frag in (
+            "parameter",
+            "param_file",
+            "file_content",
+            "contents",
+            "content",
+            "prmf",
+            # GoldenGate returns parameter files and reports as lists of lines.
+            "config",
+            "lines",
+        )
     )
 
 # Match Basic auth and common URL/query credential patterns in free-text errors.
@@ -109,8 +110,14 @@ def redact_sensitive_data(obj: Any, *, _seen: Set[int] | None = None) -> Any:
                     out[ks] = _REDACT_PLACEHOLDER
                 else:
                     cleaned = redact_sensitive_data(v, _seen=_seen)
-                    if isinstance(cleaned, str) and _key_suggests_param_blob(ks):
-                        cleaned = redact_parameter_file_text(cleaned)
+                    if _key_suggests_param_blob(ks):
+                        if isinstance(cleaned, str):
+                            cleaned = redact_parameter_file_text(cleaned)
+                        elif isinstance(cleaned, list):
+                            cleaned = [
+                                redact_parameter_file_text(item) if isinstance(item, str) else item
+                                for item in cleaned
+                            ]
                     out[ks] = cleaned
             return out
         finally:

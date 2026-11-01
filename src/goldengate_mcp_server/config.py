@@ -6,11 +6,57 @@ Supports environment variables, config files, and secure credential management.
 
 import json
 import os
-from dataclasses import dataclass
+import re
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
+
+_TRUE_VALUES = {"1", "true", "yes", "on"}
+_FALSE_VALUES = {"0", "false", "no", "off"}
+
+# Matches Jira (OPS-123) and ServiceNow (CHG0012345) style references.
+DEFAULT_CHANGE_TICKET_PATTERN = r"[A-Za-z][A-Za-z0-9_]*-?\d+"
+
+
+def env_bool(name: str, default: bool) -> bool:
+    """Boolean env var. Anything unrecognised is an error: GG_READ_ONLY=ture must not
+    quietly enable writes, nor VERIFY_SSL=1 quietly disable TLS checks."""
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return default
+    value = raw.strip().lower()
+    if value in _TRUE_VALUES:
+        return True
+    if value in _FALSE_VALUES:
+        return False
+    raise ValueError(f"{name} must be true or false, got {raw!r}")
+
+
+def env_list(name: str) -> List[str]:
+    """Comma-separated env var as a list, blanks dropped."""
+    return [item.strip() for item in os.getenv(name, "").split(",") if item.strip()]
+
+
+def read_secret_file(path: str) -> str:
+    """Contents of a mounted secret (Docker/Kubernetes secrets end in a newline)."""
+    return Path(path).read_text(encoding="utf-8").strip()
+
+
+def env_secret(name: str) -> Optional[str]:
+    """``name``, or the contents of the file at ``<name>_FILE``."""
+    secret_file = os.getenv(f"{name}_FILE")
+    if secret_file:
+        return read_secret_file(secret_file)
+    return os.getenv(name)
+
+
+def _entry_password(dep: Dict[str, Any]) -> str:
+    """``password`` of a JSON deployment entry, or the contents of its ``password_file``."""
+    if dep.get("password_file"):
+        return read_secret_file(dep["password_file"])
+    return dep["password"]
 
 
 @dataclass
@@ -19,7 +65,7 @@ class DeploymentConfig:
     name: str
     base_url: str
     username: str
-    password: str
+    password: str = field(repr=False)
     verify_ssl: bool = True
     ca_bundle: Optional[str] = None  # Path to CA certificate bundle (.pem/.crt)
     # Real GoldenGate deployment name used in /services/{deployment}/adminsrvr/... URLs.
@@ -97,6 +143,48 @@ class Config(BaseModel):
         le=100
     )
 
+    # Governance
+    backup_dir: str = Field(
+        default="./backups",
+        description="Directory for redacted config snapshots; compare_deployment_configs "
+        "only reads files inside it"
+    )
+
+    write_deployments: List[str] = Field(
+        default_factory=list,
+        description="Deployments that accept write tools (empty = all, when not read-only)"
+    )
+
+    protected_deployments: List[str] = Field(
+        default_factory=list,
+        description="Deployments whose write tools require a change_ticket"
+    )
+
+    disabled_tools: List[str] = Field(
+        default_factory=list,
+        description="Tools turned off for everyone"
+    )
+
+    max_batch_size: int = Field(
+        default=25,
+        description="Most processes one batch tool call may touch",
+        ge=1,
+    )
+
+    change_ticket_pattern: str = Field(
+        default=DEFAULT_CHANGE_TICKET_PATTERN,
+        description="Regex a change_ticket must fully match"
+    )
+
+    # Logging
+    log_level: str = Field(default="INFO", description="Python log level")
+
+    log_format: str = Field(
+        default="text",
+        description="'text' or 'json' (one object per line, for log shippers)",
+        pattern="^(text|json)$",
+    )
+
     # Deployments
     deployments: List[DeploymentConfig] = Field(
         default_factory=list,
@@ -109,7 +197,30 @@ class Config(BaseModel):
         """Ensure at least one deployment is configured."""
         if not v:
             raise ValueError("At least one deployment must be configured")
+        names = [d.name for d in v]
+        duplicates = sorted({n for n in names if names.count(n) > 1})
+        if duplicates:
+            raise ValueError(f"Duplicate deployment names: {', '.join(duplicates)}")
         return v
+
+    @field_validator('change_ticket_pattern')
+    @classmethod
+    def validate_change_ticket_pattern(cls, v):
+        try:
+            re.compile(v)
+        except re.error as e:
+            raise ValueError(f"Invalid change_ticket_pattern: {e}") from e
+        return v
+
+    @model_validator(mode='after')
+    def validate_policy_deployments(self):
+        """A typo here would silently leave a production deployment unprotected."""
+        known = {d.name for d in self.deployments}
+        for setting in ("write_deployments", "protected_deployments"):
+            unknown = sorted(set(getattr(self, setting)) - known)
+            if unknown:
+                raise ValueError(f"{setting} names unknown deployments: {', '.join(unknown)}")
+        return self
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -122,6 +233,14 @@ class Config(BaseModel):
         - GG_AUDIT_LOG_PATH: Path to audit log (default: ./logs/audit.log)
         - GG_AUDIT_LOG_MAX_BYTES: Rotate audit log at this size (default: 10 MB, 0 = never)
         - GG_AUDIT_LOG_BACKUP_COUNT: Rotated audit files to keep (default: 5)
+        - GG_BACKUP_DIR: Directory for config snapshots (default: ./backups)
+        - GG_WRITE_DEPLOYMENTS: Comma-separated deployments that accept writes (default: all)
+        - GG_PROTECTED_DEPLOYMENTS: Comma-separated deployments requiring a change_ticket
+        - GG_DISABLED_TOOLS: Comma-separated tools to turn off
+        - GG_MAX_BATCH_SIZE: Most processes per batch call (default: 25)
+        - GG_CHANGE_TICKET_PATTERN: Regex a change_ticket must fully match
+        - GG_LOG_LEVEL: Log level (default: INFO)
+        - GG_LOG_FORMAT: text or json (default: text)
         - GG_DEPLOYMENTS: JSON string with deployment configurations
 
         Or individual deployment configs:
@@ -129,7 +248,7 @@ class Config(BaseModel):
         - GG_DEPLOYMENT_<N>_NAMES: Comma-separated names sharing the same URL/credentials
         - GG_DEPLOYMENT_<N>_URL: Base URL
         - GG_DEPLOYMENT_<N>_USERNAME: Username
-        - GG_DEPLOYMENT_<N>_PASSWORD: Password
+        - GG_DEPLOYMENT_<N>_PASSWORD: Password (or GG_DEPLOYMENT_<N>_PASSWORD_FILE: path to it)
         - GG_DEPLOYMENT_<N>_VERIFY_SSL: Verify SSL (default: true)
         - GG_DEPLOYMENT_<N>_GG_DEPLOYMENT: Real GoldenGate deployment name when NAME is
           an alias (only valid with a single NAME)
@@ -138,8 +257,8 @@ class Config(BaseModel):
             Config instance
         """
         # Basic settings
-        read_only = os.getenv("GG_READ_ONLY", "true").lower() == "true"
-        enable_metrics = os.getenv("GG_ENABLE_METRICS", "false").lower() == "true"
+        read_only = env_bool("GG_READ_ONLY", True)
+        enable_metrics = env_bool("GG_ENABLE_METRICS", False)
         request_timeout = int(os.getenv("GG_REQUEST_TIMEOUT", "30"))
         audit_log_path = os.getenv("GG_AUDIT_LOG_PATH", "./logs/audit.log")
         audit_log_max_bytes = int(os.getenv("GG_AUDIT_LOG_MAX_BYTES", str(10 * 1024 * 1024)))
@@ -148,6 +267,18 @@ class Config(BaseModel):
         cache_ttl_seconds = int(os.getenv("GG_CACHE_TTL_SECONDS", "30"))
         max_concurrent_requests = int(os.getenv("GG_MAX_CONCURRENT_REQUESTS", "10"))
         requests_per_second = int(os.getenv("GG_REQUESTS_PER_SECOND", "20"))
+        governance = dict(
+            backup_dir=os.getenv("GG_BACKUP_DIR", "./backups"),
+            write_deployments=env_list("GG_WRITE_DEPLOYMENTS"),
+            protected_deployments=env_list("GG_PROTECTED_DEPLOYMENTS"),
+            disabled_tools=env_list("GG_DISABLED_TOOLS"),
+            max_batch_size=int(os.getenv("GG_MAX_BATCH_SIZE", "25")),
+            change_ticket_pattern=os.getenv(
+                "GG_CHANGE_TICKET_PATTERN", DEFAULT_CHANGE_TICKET_PATTERN
+            ),
+            log_level=os.getenv("GG_LOG_LEVEL", "INFO").upper(),
+            log_format=os.getenv("GG_LOG_FORMAT", "text").lower(),
+        )
 
         # Load deployments
         deployments = []
@@ -168,7 +299,7 @@ class Config(BaseModel):
                             name=dep_name.strip(),
                             base_url=dep["base_url"],
                             username=dep["username"],
-                            password=dep["password"],
+                            password=_entry_password(dep),
                             verify_ssl=dep.get("verify_ssl", True),
                             ca_bundle=dep.get("ca_bundle"),
                             gg_deployment=gg_deployment,
@@ -190,8 +321,8 @@ class Config(BaseModel):
 
                 base_url = os.getenv(f"GG_DEPLOYMENT_{i}_URL")
                 username = os.getenv(f"GG_DEPLOYMENT_{i}_USERNAME")
-                password = os.getenv(f"GG_DEPLOYMENT_{i}_PASSWORD")
-                verify_ssl = os.getenv(f"GG_DEPLOYMENT_{i}_VERIFY_SSL", "true").lower() == "true"
+                password = env_secret(f"GG_DEPLOYMENT_{i}_PASSWORD")
+                verify_ssl = env_bool(f"GG_DEPLOYMENT_{i}_VERIFY_SSL", True)
                 ca_bundle = os.getenv(f"GG_DEPLOYMENT_{i}_CA_BUNDLE")
                 gg_deployment = os.getenv(f"GG_DEPLOYMENT_{i}_GG_DEPLOYMENT")
 
@@ -228,7 +359,8 @@ class Config(BaseModel):
             cache_ttl_seconds=cache_ttl_seconds,
             max_concurrent_requests=max_concurrent_requests,
             requests_per_second=requests_per_second,
-            deployments=deployments
+            deployments=deployments,
+            **governance,
         )
 
     @classmethod
@@ -251,18 +383,14 @@ class Config(BaseModel):
                 name=dep["name"],
                 base_url=dep["base_url"],
                 username=dep["username"],
-                password=dep["password"],
+                password=_entry_password(dep),
                 verify_ssl=dep.get("verify_ssl", True),
                 ca_bundle=dep.get("ca_bundle"),
                 gg_deployment=dep.get("gg_deployment"),
             ))
 
-        return cls(
-            read_only=data.get("read_only", True),
-            request_timeout=data.get("request_timeout", 30),
-            audit_log_path=data.get("audit_log_path", "./logs/audit.log"),
-            deployments=deployments
-        )
+        settings = {k: v for k, v in data.items() if k != "deployments"}
+        return cls(deployments=deployments, **settings)
 
     def to_file(self, config_path: str, *, include_secrets: bool = False):
         """

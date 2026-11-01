@@ -1,9 +1,13 @@
 """Async HTTP client for the GoldenGate Microservices REST API."""
 
 import asyncio
+import copy
+import difflib
+import json
 import logging
 import re
-from typing import Any, Dict, Optional, Union
+import time
+from typing import Any, Dict, List, Optional, Union
 from urllib.parse import urljoin
 
 import httpx
@@ -15,7 +19,8 @@ from tenacity import (
 )
 
 from .cache import RateLimiter, SimpleCache
-from .utils import parse_lag_duration
+from .redaction import redact_error_text
+from .utils import collection_items, parse_lag_duration, unwrap_response
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +39,42 @@ def _is_transient_request_error(exc: BaseException) -> bool:
     if isinstance(exc, GoldenGateAPIError):
         return exc.http_status in (502, 503, 504)
     return False
+
+
+async def process_states(client: Any, process_type: str) -> List[Dict[str, Any]]:
+    """
+    ``{"name", "status"}`` for every Extract or Replicat in a deployment.
+
+    The list endpoints may return only names and links, so a missing status is filled in
+    from the process detail (``"unknown"`` if that fails) rather than reported as healthy.
+    """
+    if process_type == "extract":
+        listing, detail = client.list_extracts, client.get_extract_status
+    else:
+        listing, detail = client.list_replicats, client.get_replicat_status
+
+    async def state(item: Dict[str, Any]) -> Dict[str, Any]:
+        name, status = item.get("name"), item.get("status")
+        if status is None:
+            try:
+                status = unwrap_response(await detail(name)).get("status")
+            except Exception as e:
+                logger.warning("Could not get status of %s %s: %s", process_type, name, e)
+        return {"name": name, "status": status or "unknown"}
+
+    return list(await asyncio.gather(*(state(i) for i in collection_items(await listing()))))
+
+
+def _param_lines(process: Any) -> List[str]:
+    """Parameter file of a backed-up process as comparable lines."""
+    param = process.get("parameter_file") if isinstance(process, dict) else None
+    if isinstance(param, str):
+        return param.splitlines()
+    if isinstance(param, dict) and isinstance(param.get("lines"), list):
+        return [str(line) for line in param["lines"]]
+    if not param:
+        return []
+    return json.dumps(param, indent=2, sort_keys=True, default=str).splitlines()
 
 
 class GoldenGateClient:
@@ -114,7 +155,7 @@ class GoldenGateClient:
             cache_key = f"{endpoint}:{params}"
             cached_response = self.cache.get(cache_key)
             if cached_response is not None:
-                return cached_response
+                return copy.deepcopy(cached_response)
 
         url = urljoin(self.base_url, endpoint)
 
@@ -127,7 +168,7 @@ class GoldenGateClient:
 
             if method == "GET" and use_cache:
                 cache_key = f"{endpoint}:{params}"
-                self.cache.set(cache_key, result)
+                self.cache.set(cache_key, copy.deepcopy(result))
 
             return result
         except httpx.HTTPError as e:
@@ -194,13 +235,83 @@ class GoldenGateClient:
         """List all services in the deployment."""
         return await self._request("GET", "/services")
 
+    # ==================== Process Runtime Information ====================
+
+    def _info_path(self, process_type: str, process_name: str, suffix: str) -> str:
+        if process_type not in ("extract", "replicat"):
+            raise ValueError(f"Invalid process type: {process_type}")
+        process_name = self._sanitize_name(process_name)
+        return self._admin_path(f"{process_type}s/{process_name}/info/{suffix}")
+
+    async def _with_runtime_lag(
+        self, process_type: str, process_name: str, full_status: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Process detail body, with ``lag`` from /info/status when the detail has none."""
+        status = unwrap_response(full_status)
+        if status.get("lag") is not None or status.get("status") != "running":
+            return status
+        try:
+            runtime = await self._request(
+                "GET", self._info_path(process_type, process_name, "status")
+            )
+        except GoldenGateAPIError as e:
+            logger.debug("No /info/status for %s: %s", process_name, e)
+            return status
+        return {**status, **unwrap_response(runtime)}
+
+    async def get_process_report(
+        self, process_type: str, process_name: str, report: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Get a process report file (the current one unless ``report`` names another).
+
+        Args:
+            process_type: 'extract' or 'replicat'
+            process_name: Name of the process
+            report: Report file, e.g. 'EXT10.rpt' for the previous run
+
+        Returns:
+            Report body with its ``lines``
+        """
+        name = report or f"{process_name}.rpt"
+        if not re.fullmatch(r"[a-zA-Z0-9_-]+\.rpt", name):
+            raise ValueError(f"Invalid report name: {name}")
+        path = self._info_path(process_type, process_name, f"reports/{name}")
+        return unwrap_response(await self._request("GET", path, use_cache=False))
+
+    async def get_process_checkpoints(
+        self, process_type: str, process_name: str, history: int = 0
+    ) -> Dict[str, Any]:
+        """
+        Get a process's checkpoint positions.
+
+        Args:
+            process_type: 'extract' or 'replicat'
+            process_name: Name of the process
+            history: Number of historical checkpoint records to include
+
+        Returns:
+            Checkpoint information
+        """
+        path = self._info_path(process_type, process_name, "checkpoints")
+        params = {"history": history} if history else None
+        return unwrap_response(await self._request("GET", path, params=params))
+
+    async def get_messages(self) -> Dict[str, Any]:
+        """Get recent messages from the Administration Server."""
+        return unwrap_response(
+            await self._request("GET", self._admin_path("messages"), use_cache=False)
+        )
+
     # ==================== Extract Operations ====================
 
     async def list_extracts(self) -> Dict[str, Any]:
         """List all Extract processes."""
         return await self._request("GET", self._admin_path("extracts"))
 
-    async def get_extract_status(self, extract_name: str) -> Dict[str, Any]:
+    async def get_extract_status(
+        self, extract_name: str, use_cache: bool = True
+    ) -> Dict[str, Any]:
         """
         Get status of a specific Extract.
 
@@ -212,7 +323,9 @@ class GoldenGateClient:
         """
         # Sanitize input
         extract_name = self._sanitize_name(extract_name)
-        return await self._request("GET", self._admin_path(f"extracts/{extract_name}"))
+        return await self._request(
+            "GET", self._admin_path(f"extracts/{extract_name}"), use_cache=use_cache
+        )
 
     async def get_extract_lag(self, extract_name: str) -> Dict[str, Any]:
         """
@@ -228,7 +341,7 @@ class GoldenGateClient:
 
         # Get full status which includes lag
         full_status = await self.get_extract_status(extract_name)
-        status = full_status.get("response", full_status)
+        status = await self._with_runtime_lag("extract", extract_name, full_status)
 
         # Extract lag information
         lag_data = {
@@ -280,7 +393,9 @@ class GoldenGateClient:
         """List all Replicat processes."""
         return await self._request("GET", self._admin_path("replicats"))
 
-    async def get_replicat_status(self, replicat_name: str) -> Dict[str, Any]:
+    async def get_replicat_status(
+        self, replicat_name: str, use_cache: bool = True
+    ) -> Dict[str, Any]:
         """
         Get status of a specific Replicat.
 
@@ -291,7 +406,9 @@ class GoldenGateClient:
             Replicat status information
         """
         replicat_name = self._sanitize_name(replicat_name)
-        return await self._request("GET", self._admin_path(f"replicats/{replicat_name}"))
+        return await self._request(
+            "GET", self._admin_path(f"replicats/{replicat_name}"), use_cache=use_cache
+        )
 
     async def get_replicat_lag(self, replicat_name: str) -> Dict[str, Any]:
         """
@@ -307,7 +424,7 @@ class GoldenGateClient:
 
         # Get full status which includes lag
         full_status = await self.get_replicat_status(replicat_name)
-        status = full_status.get("response", full_status)
+        status = await self._with_runtime_lag("replicat", replicat_name, full_status)
 
         # Extract lag information
         lag_data = {
@@ -545,10 +662,68 @@ class GoldenGateClient:
                 return {"success": True, "result": await action(name)}
             except Exception as e:
                 logger.error("Failed to %s %s: %s", label, name, e)
-                return {"success": False, "error": str(e)}
+                return {"success": False, "error": redact_error_text(str(e))}
 
         outcomes = await asyncio.gather(*(one(n) for n in process_names))
         return dict(zip(process_names, outcomes, strict=True))
+
+    async def wait_for_status(
+        self,
+        process_type: str,
+        process_name: str,
+        wanted: str,
+        timeout: float = 60,
+        interval: float = 2,
+    ) -> Optional[str]:
+        """Poll live status until it is ``wanted`` or ``timeout`` passes; returns the last seen."""
+        read = self.get_extract_status if process_type == "extract" else self.get_replicat_status
+        deadline = time.monotonic() + timeout
+        while True:
+            status = unwrap_response(await read(process_name, use_cache=False)).get("status")
+            if status == wanted or time.monotonic() >= deadline:
+                return status
+            await asyncio.sleep(interval)
+
+    async def restart_process(
+        self, process_type: str, process_name: str, timeout: float = 120
+    ) -> Dict[str, Any]:
+        """
+        Stop a process, wait until it has stopped, start it and wait until it runs.
+
+        A process that does not stop in time is left alone rather than started over itself.
+
+        Args:
+            process_type: 'extract' or 'replicat'
+            process_name: Name of the process
+            timeout: Seconds to wait for each transition
+
+        Returns:
+            Previous and final status; ``success`` is False if it is not running at the end
+        """
+        if process_type == "extract":
+            read, start, stop = self.get_extract_status, self.start_extract, self.stop_extract
+        else:
+            read, start, stop = self.get_replicat_status, self.start_replicat, self.stop_replicat
+
+        previous = unwrap_response(await read(process_name, use_cache=False)).get("status")
+        if previous in ("running", "starting"):
+            await stop(process_name)
+            stopped = await self.wait_for_status(process_type, process_name, "stopped", timeout)
+            if stopped != "stopped":
+                return {
+                    "success": False,
+                    "error": f"{process_name} did not stop within {timeout}s; not restarted",
+                    "previous_status": previous,
+                    "status": stopped,
+                }
+
+        await start(process_name)
+        status = await self.wait_for_status(process_type, process_name, "running", timeout)
+        return {
+            "success": status == "running",
+            "previous_status": previous,
+            "status": status,
+        }
 
     async def get_all_process_health(self) -> Dict[str, Any]:
         """
@@ -569,90 +744,44 @@ class GoldenGateClient:
             }
         }
 
-        # Get all extracts
-        try:
-            extracts_data = await self.list_extracts()
-            # Handle standardResponse wrapper
-            items = (
-                extracts_data.get("response", {}).get("items", [])
-                if "response" in extracts_data
-                else extracts_data.get("items", [])
-            )
+        for process_type, group, get_lag in (
+            ("extract", "extracts", self.get_extract_lag),
+            ("replicat", "replicats", self.get_replicat_lag),
+        ):
+            try:
+                for info in await process_states(self, process_type):
+                    status = info["status"]
 
-            for extract in items:
-                name = extract.get("name")
-                status = extract.get("status")
+                    if status == "running":
+                        try:
+                            lag_data = await get_lag(info["name"])
+                            info["lag"] = lag_data
 
-                extract_info = {"name": name, "status": status}
+                            # Parse lag for summary
+                            lag_seconds = parse_lag_duration(lag_data.get("lag"))
+                            if lag_seconds:
+                                health["summary"]["total_lag_seconds"] += lag_seconds
+                        except Exception:
+                            pass
 
-                if status == "running":
-                    try:
-                        lag_data = await self.get_extract_lag(name)
-                        extract_info["lag"] = lag_data
+                    health[group].append(info)
+                    health["summary"]["total_processes"] += 1
 
-                        # Parse lag for summary
-                        lag_str = lag_data.get("lag", "00:00:00")
-                        lag_seconds = parse_lag_duration(lag_str)
-                        if lag_seconds:
-                            health["summary"]["total_lag_seconds"] += lag_seconds
-                    except Exception:
-                        pass
-
-                health["extracts"].append(extract_info)
-                health["summary"]["total_processes"] += 1
-
-                if status == "running":
-                    health["summary"]["running"] += 1
-                elif status == "stopped":
-                    health["summary"]["stopped"] += 1
-                elif status == "abended":
-                    health["summary"]["abended"] += 1
-        except Exception as e:
-            logger.error(f"Error getting extracts: {e}")
-
-        # Get all replicats
-        try:
-            replicats_data = await self.list_replicats()
-            # Handle standardResponse wrapper
-            items = (
-                replicats_data.get("response", {}).get("items", [])
-                if "response" in replicats_data
-                else replicats_data.get("items", [])
-            )
-
-            for replicat in items:
-                name = replicat.get("name")
-                status = replicat.get("status")
-
-                replicat_info = {"name": name, "status": status}
-
-                if status == "running":
-                    try:
-                        lag_data = await self.get_replicat_lag(name)
-                        replicat_info["lag"] = lag_data
-
-                        lag_str = lag_data.get("lag", "00:00:00")
-                        lag_seconds = parse_lag_duration(lag_str)
-                        if lag_seconds:
-                            health["summary"]["total_lag_seconds"] += lag_seconds
-                    except Exception:
-                        pass
-
-                health["replicats"].append(replicat_info)
-                health["summary"]["total_processes"] += 1
-
-                if status == "running":
-                    health["summary"]["running"] += 1
-                elif status == "stopped":
-                    health["summary"]["stopped"] += 1
-                elif status == "abended":
-                    health["summary"]["abended"] += 1
-        except Exception as e:
-            logger.error(f"Error getting replicats: {e}")
+                    if status in ("running", "stopped", "abended"):
+                        health["summary"][status] += 1
+            except Exception as e:
+                logger.error(f"Error getting {group}: {e}")
 
         return health
 
     # ==================== Configuration Management ====================
+
+    @staticmethod
+    def _with_parameter_file(details: Dict[str, Any]) -> Dict[str, Any]:
+        """Expose a process's ``config`` lines (its parameter file) as ``parameter_file``."""
+        lines = unwrap_response(details).get("config")
+        details["parameter_file"] = {"lines": lines} if lines is not None else None
+        return details
 
     async def get_extract_config(self, extract_name: str) -> Dict[str, Any]:
         """
@@ -665,25 +794,8 @@ class GoldenGateClient:
             Configuration including parameter file content
         """
         extract_name = self._sanitize_name(extract_name)
-
-        # Get full extract details which includes configuration
-        extract_details = await self._request(
-            "GET",
-            self._admin_path(f"extracts/{extract_name}")
-        )
-
-        # Try to get parameter file content
-        try:
-            param_file = await self._request(
-                "GET",
-                self._admin_path(f"extracts/{extract_name}/parameterfile")
-            )
-            extract_details["parameter_file"] = param_file
-        except Exception as e:
-            logger.debug(f"Could not get parameter file for {extract_name}: {e}")
-            extract_details["parameter_file"] = None
-
-        return extract_details
+        details = await self._request("GET", self._admin_path(f"extracts/{extract_name}"))
+        return self._with_parameter_file(details)
 
     async def get_replicat_config(self, replicat_name: str) -> Dict[str, Any]:
         """
@@ -696,25 +808,8 @@ class GoldenGateClient:
             Configuration including parameter file content
         """
         replicat_name = self._sanitize_name(replicat_name)
-
-        # Get full replicat details
-        replicat_details = await self._request(
-            "GET",
-            self._admin_path(f"replicats/{replicat_name}")
-        )
-
-        # Try to get parameter file content
-        try:
-            param_file = await self._request(
-                "GET",
-                self._admin_path(f"replicats/{replicat_name}/parameterfile")
-            )
-            replicat_details["parameter_file"] = param_file
-        except Exception as e:
-            logger.debug(f"Could not get parameter file for {replicat_name}: {e}")
-            replicat_details["parameter_file"] = None
-
-        return replicat_details
+        details = await self._request("GET", self._admin_path(f"replicats/{replicat_name}"))
+        return self._with_parameter_file(details)
 
     async def backup_all_configs(self) -> Dict[str, Any]:
         """
@@ -740,33 +835,25 @@ class GoldenGateClient:
         except Exception as e:
             logger.warning(f"Could not get deployment info: {e}")
 
-        # Backup all extracts
-        try:
-            extracts = await self.list_extracts()
-            for extract in extracts.get("items", []):
-                name = extract.get("name")
+        for process_type, group, get_config in (
+            ("extract", "extracts", self.get_extract_config),
+            ("replicat", "replicats", self.get_replicat_config),
+        ):
+            try:
+                states = await process_states(self, process_type)
+            except Exception as e:
+                logger.error(f"Failed to list {group}: {e}")
+                backup.setdefault("errors", []).append(
+                    redact_error_text(f"Failed to list {group}: {e}")
+                )
+                continue
+            for state in states:
+                name = state["name"]
                 try:
-                    config = await self.get_extract_config(name)
-                    backup["extracts"][name] = config
+                    backup[group][name] = await get_config(name)
                 except Exception as e:
-                    logger.error(f"Failed to backup Extract {name}: {e}")
-                    backup["extracts"][name] = {"error": str(e)}
-        except Exception as e:
-            logger.error(f"Failed to list extracts: {e}")
-
-        # Backup all replicats
-        try:
-            replicats = await self.list_replicats()
-            for replicat in replicats.get("items", []):
-                name = replicat.get("name")
-                try:
-                    config = await self.get_replicat_config(name)
-                    backup["replicats"][name] = config
-                except Exception as e:
-                    logger.error(f"Failed to backup Replicat {name}: {e}")
-                    backup["replicats"][name] = {"error": str(e)}
-        except Exception as e:
-            logger.error(f"Failed to list replicats: {e}")
+                    logger.error(f"Failed to backup {process_type} {name}: {e}")
+                    backup[group][name] = {"error": redact_error_text(str(e))}
 
         return backup
 
@@ -792,82 +879,34 @@ class GoldenGateClient:
             }
         }
 
-        # Compare extracts
-        extracts1 = set(config1.get("extracts", {}).keys())
-        extracts2 = set(config2.get("extracts", {}).keys())
+        for label, group in (("Extract", "extracts"), ("Replicat", "replicats")):
+            current = config1.get(group, {})
+            baseline = config2.get(group, {})
 
-        added_extracts = extracts1 - extracts2
-        removed_extracts = extracts2 - extracts1
-        common_extracts = extracts1 & extracts2
+            added = sorted(set(current) - set(baseline))
+            removed = sorted(set(baseline) - set(current))
 
-        if added_extracts:
-            comparison["identical"] = False
-            comparison["summary"]["added_processes"].extend(
-                [f"Extract: {name}" for name in added_extracts]
-            )
-
-        if removed_extracts:
-            comparison["identical"] = False
-            comparison["summary"]["removed_processes"].extend(
-                [f"Extract: {name}" for name in removed_extracts]
-            )
-
-        # Compare common extracts
-        for name in common_extracts:
-            ext1 = config1["extracts"][name]
-            ext2 = config2["extracts"][name]
-
-            # Compare parameter files
-            param1 = ext1.get("parameter_file", {})
-            param2 = ext2.get("parameter_file", {})
-
-            if param1 != param2:
+            if added or removed:
                 comparison["identical"] = False
-                comparison["summary"]["modified_processes"].append(f"Extract: {name}")
-                comparison["differences"].append({
-                    "process": name,
-                    "type": "extract",
-                    "field": "parameter_file",
-                    "change": "modified"
-                })
+            comparison["summary"]["added_processes"].extend(f"{label}: {n}" for n in added)
+            comparison["summary"]["removed_processes"].extend(f"{label}: {n}" for n in removed)
 
-        # Compare replicats
-        replicats1 = set(config1.get("replicats", {}).keys())
-        replicats2 = set(config2.get("replicats", {}).keys())
+            for name in sorted(set(current) & set(baseline)):
+                lines_now = _param_lines(current[name])
+                lines_then = _param_lines(baseline[name])
 
-        added_replicats = replicats1 - replicats2
-        removed_replicats = replicats2 - replicats1
-        common_replicats = replicats1 & replicats2
-
-        if added_replicats:
-            comparison["identical"] = False
-            comparison["summary"]["added_processes"].extend(
-                [f"Replicat: {name}" for name in added_replicats]
-            )
-
-        if removed_replicats:
-            comparison["identical"] = False
-            comparison["summary"]["removed_processes"].extend(
-                [f"Replicat: {name}" for name in removed_replicats]
-            )
-
-        # Compare common replicats
-        for name in common_replicats:
-            rep1 = config1["replicats"][name]
-            rep2 = config2["replicats"][name]
-
-            param1 = rep1.get("parameter_file", {})
-            param2 = rep2.get("parameter_file", {})
-
-            if param1 != param2:
-                comparison["identical"] = False
-                comparison["summary"]["modified_processes"].append(f"Replicat: {name}")
-                comparison["differences"].append({
-                    "process": name,
-                    "type": "replicat",
-                    "field": "parameter_file",
-                    "change": "modified"
-                })
+                if lines_now != lines_then:
+                    comparison["identical"] = False
+                    comparison["summary"]["modified_processes"].append(f"{label}: {name}")
+                    comparison["differences"].append({
+                        "process": name,
+                        "type": label.lower(),
+                        "field": "parameter_file",
+                        "change": "modified",
+                        "diff": list(difflib.unified_diff(
+                            lines_then, lines_now, "baseline", "current", lineterm=""
+                        )),
+                    })
 
         return comparison
 
@@ -892,6 +931,6 @@ class GoldenGateClient:
         """
         # Remove potentially dangerous characters
         # GoldenGate names are typically alphanumeric with underscores
-        if not re.match(r'^[a-zA-Z0-9_-]+$', name):
+        if not re.fullmatch(r'[a-zA-Z0-9_-]+', name):
             raise ValueError(f"Invalid process name: {name}")
         return name
